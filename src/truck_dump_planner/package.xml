@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>truck_dump_planner</name>
+  <version>0.1.0</version>
+  <description>
+    无人挖掘机装车规划节点，支持挖掘(dig)、卸载(dump)、复位(reset)多阶段轨迹规划，
+    含坐标转换、卡车车厢包络建模、RViz MarkerArray 可视化和状态机调度。
+  </description>
+  <maintainer email="dev@example.com">yx</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+
+  <depend>roscpp</depend>
+  <depend>geometry_msgs</depend>
+  <depend>visualization_msgs</depend>
+  <depend>std_msgs</depend>
+</package>

@@ -1,0 +1,17 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>reset_trajectory_planner</name>
+  <version>0.1.0</version>
+  <description>
+    无人挖掘机卸载复位轨迹规划与执行节点。
+    分阶段执行：回转先行 + 臂架按回转行程映射跟进。
+  </description>
+  <maintainer email="dev@example.com">yx</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+
+  <depend>roscpp</depend>
+  <depend>geometry_msgs</depend>
+  <depend>std_msgs</depend>
+</package>

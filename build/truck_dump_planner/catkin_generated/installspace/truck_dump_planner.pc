@@ -1,0 +1,8 @@
+prefix=/home/zhuay/yx_planning_ws/install
+
+Name: truck_dump_planner
+Description: Description of truck_dump_planner
+Version: 0.1.0
+Cflags: -I${prefix}/include
+Libs: -L${prefix}/lib 
+Requires: roscpp geometry_msgs visualization_msgs std_msgs

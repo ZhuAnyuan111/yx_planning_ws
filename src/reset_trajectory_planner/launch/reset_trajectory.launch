@@ -1,0 +1,10 @@
+<launch>
+  <!-- 复位轨迹规划与执行节点 -->
+  <!-- 卸载结束后回转先行、臂架按回转剩余行程映射，复位到下一挖掘点 -->
+
+  <node pkg="reset_trajectory_planner" type="reset_trajectory_node"
+        name="reset_trajectory_node" output="screen">
+    <rosparam command="load"
+              file="$(find reset_trajectory_planner)/config/reset_trajectory.yaml"/>
+  </node>
+</launch>

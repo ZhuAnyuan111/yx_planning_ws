@@ -1,0 +1,140 @@
+# =============================================================
+# 卸载轨迹规划节点参数（关节空间版）
+# 节点私有命名空间：/dump_trajectory_node/
+# =============================================================
+
+# ---- kinematics 运动学参数（由 KinematicsSolver 从 pnh/kinematics/... 加载）----
+kinematics:
+  # 连杆长度 (m)
+  boom_length: 6.987
+  arm_length: 2.797
+  bucket_tooth_length: 2.359
+  # 动臂销轴相对回转中心的偏置 (m)
+  boom_pivot_x: 0.09
+  boom_pivot_y: 0.03
+  boom_pivot_z: 0.0
+  # 关节限位 (deg)
+  boom_joint_lower: -25.0
+  boom_joint_upper:  50.0
+  arm_joint_lower:  -150.0
+  arm_joint_upper:     -30.0
+  bucket_joint_lower: -135.0
+  bucket_joint_upper:   30.0
+
+# ---- 可行性检查 ----
+feasibility:
+  enable_envelope_prefilter: false   # 是否启用 IK 前的包络粗筛
+  reach_min: 3.0                    # 水平半径最小值 (m)
+  reach_max: 12.0                   # 水平半径最大值 (m)
+  dump_height_min: 0.0              # 卸载点最低高度 (m)
+  dump_height_max: 5.5              # 卸载点最高高度 (m)
+  bucket_attitude_deg: -90.0        # 卸载姿态角 (deg，齿尖朝下)
+
+# ---- 关键航路点生成（照 MATLAB 方案，6 关节点）----
+waypoint:
+  # 姿态角上限：boom+arm+bucket ≥ 该值时用姿态角约束修正 bucket
+  attitude_angle_deg: -180.0
+
+  # WP4 铰接点相对卡车表面的高度偏置 (m)
+  # 铰接点目标高度 = (truck_center_z - truck_height_offset) + wp4_height_bias
+  wp4_height_bias: 1.5
+
+  # 卡车框高度偏移 (m)：卡车框高度 = truck_center_z - truck_height_offset
+  truck_height_offset: 0.5
+
+  # WP4 IK 求解的铲斗关节角（deg），bucket_len=0 时不影响 swing/boom/arm
+  wp4_bucket_angle_deg: 25.0
+
+  # WP3 swing 最小步长：|median - swing4| ≤ 该值时用 swing4 ± 该值
+  wp3_swing_step_deg: 5.0
+
+  # WP2 boom 提升幅度插值参数
+  p3_min_z0_swing_deg: 10.0    # swing 差 ≤ 该值 → boom 直接提到 WP4 高度
+  p3_max_z0_swing_deg: 60.0    # swing 差 ≥ 该值 → boom 仅做最小提升
+  max_boom_lift24_deg: 20.0    # WP2 相对 WP4 的 boom 最大差值
+
+  # WP3 swing 速度插值参数
+  p3_min_swing_deg: 15.0
+  p3_max_swing_deg: 60.0
+  min_p3_swing_vel_dps: 10.0
+  max_p3_swing_vel_dps: 15.0
+
+  # WP3 混合系数：值越小 → 越早开始跟随
+  p3_boom_cof: 0.5             # boom3 = cof·boom2 + (1-cof)·boom4
+  p3_arm_cof: 0.5              # arm3  = cof·arm2  + (1-cof)·arm4
+
+  # WP5 混合系数
+  p5_boom_cof: 0.5
+  p5_arm_cof: 0.5
+
+  # 段主导关节速度 (deg/s)
+  wp2_vel_boom_dps: 10.0
+  wp4_vel_swing_dps: 15.0
+  wp4_vel_arm_dps: 15.0
+  wp5_vel_boom_dps: 8.0
+  wp5_vel_arm_dps: 15.0
+  wp5_vel_bkt_dps: 50.0
+
+  # 铲斗关节限位 (deg)
+  bucket_limit_lower_deg: -170.0
+  bucket_limit_upper_deg:   30.0
+
+  # ---- WP4 入厢点（回转圆策略，照 MATLAB calc_entry_point_circle_strategy）----
+  truck_box_length: 5.0        # 卡车厢长 L (m)
+  truck_box_width:  2.6        # 卡车厢宽 W (m)
+  wp4_R_coff:       0.5        # 回转圆半径混合系数：R = coff·R_dig_end + (1-coff)·R_unload
+
+# ---- 逐帧发布频率 (Hz) ----
+publish_rate: 10.0
+
+# ---- 可视化（RViz 实机联调）----
+visualization:
+  enable: true          # 可视化总开关：false 时不发布任何 dump_viz/* 话题
+  frame_id: base        # 全部可视化 marker 的坐标系
+
+# ---- 全局执行超时 (s) ----
+total_timeout_sec: 30.0
+
+# ---- 在线规划参数 ----
+online_plan:
+  # 段完成关节角容差（各段独立，仅检查主导关节，deg）
+  # 各段完成判定由段索引自动匹配：
+  #   seg0 WP1→WP2：仅检查 boom
+  #   seg1 WP2→WP3：仅检查 swing
+  #   seg2 WP3→WP4：swing + 高度门控（铲斗高于卡车上表面）
+  #   seg3 WP4→WP5：仅检查 swing
+  #   seg4 WP5→WP6：arm + bucket（两者均达标才完成）
+  seg0_boom_deg: 5.0
+  seg1_swing_deg: 5.0
+  seg2_swing_deg: 5.0
+  seg2_height_gate: true   # WP3→WP4 是否同时要求铲斗高度 > truck_top + margin
+  seg3_swing_deg: 5.0
+  seg4_arm_deg: 10.0
+  seg4_bucket_deg: 20.0
+
+  # 段完成需连续确认帧数（防液压振荡误判）
+  segment_confirm_frames: 3
+
+  # 段超时倍率：实际耗时 > 预期段时间 × 该值 则强制推进
+  segment_timeout_factor: 2.0
+
+  # 卡车上表面高度阈值 (m)：铲斗必须高于此值才允许进入下一段
+  truck_top_height_m: 2.0
+
+  # 铲斗需超出卡车上表面的裕量 (m)
+  bucket_clear_margin_m: 1.8
+
+  # 哪一段完成后触发铲斗高度门控（0=WP1→WP2完成后）
+  bucket_clear_seg_idx: 1       # 段1完成后(WP3到达)触发门控，确保铲斗高于卡车再开始跨越
+
+  # 门控等待超时 (s)：超时未达标自动追加一小段 boom 提升后重试
+  gate_timeout_sec: 4.0
+
+  # 每次自动提升的 boom 角度 (deg)，arm 联动保持铲斗姿态
+  gate_boost_boom_deg: 3.0
+
+  # 最大自动提升次数：超过仍不达标则终止卸载（防止无限制提升）
+  gate_max_boost_count: 6
+
+  # 航路点限位校验：clamp 修正量超过该值时判定上游航路点不可信，终止激活 (deg)
+  waypoint_clamp_abort_deg: 5.0

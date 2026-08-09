@@ -1,0 +1,25 @@
+<launch>
+  <!-- 启动装车轨迹规划节点 + RViz，默认带一个静态测试卡车位姿用于验证 -->
+
+  <arg name="test"  default="true"  doc="发布一个静态测试卡车位姿 (4,8,0), RTK航向60度"/>
+  <arg name="rviz"  default="true"  doc="启动 RViz 并加载预设配置"/>
+
+  <!-- ===== 装车轨迹规划节点 ===== -->
+  <node pkg="truck_dump_planner" type="dump_planner_node"
+        name="dump_planner_node" output="screen">
+    <rosparam command="load" file="$(find truck_dump_planner)/config/dump_planner.yaml"/>
+    <remap from="truck_pose" to="/truck_pose"/>
+  </node>
+
+  <!-- ===== 测试卡车位姿 =====
+       /truck_pose (geometry_msgs/Quaternion):
+         x/y/z = 卡车中心点位置 (4,8,0)
+         w     = RTK 方位角 α=60°（世界系，北0顺时针，角度制） -->
+  <node if="$(arg test)" pkg="rostopic" type="rostopic" name="test_pose_pub"
+        args="pub -r 2 /truck_pose geometry_msgs/Quaternion
+        '{x: 4.0, y: 8.0, z: 0.0, w: 60.0}'"/>
+
+  <!-- ===== RViz ===== -->
+  <node if="$(arg rviz)" pkg="rviz" type="rviz" name="rviz"
+        args="-d $(find truck_dump_planner)/rviz/dump_planner.rviz"/>
+</launch>

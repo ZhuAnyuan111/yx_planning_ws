@@ -1,0 +1,8 @@
+prefix=/home/zhuay/yx_planning_ws/devel
+
+Name: dump_trajectory_planner
+Description: Description of dump_trajectory_planner
+Version: 0.1.0
+Cflags: -I/home/zhuay/yx_planning_ws/src/dump_trajectory_planner/include
+Libs: -L${prefix}/lib -ldump_trajectory_planner_lib
+Requires: roscpp geometry_msgs std_msgs visualization_msgs kinematics

@@ -1,0 +1,10 @@
+<launch>
+  <!-- 卸载轨迹规划节点 -->
+  <node pkg="dump_trajectory_planner"
+        type="dump_trajectory_node"
+        name="dump_trajectory_node"
+        output="screen">
+    <rosparam file="$(find dump_trajectory_planner)/config/dump_trajectory.yaml"
+              command="load"/>
+  </node>
+</launch>

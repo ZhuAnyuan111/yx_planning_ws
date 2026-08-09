@@ -1,0 +1,8 @@
+prefix=/home/zhuay/yx_planning_ws/devel
+
+Name: kinematics
+Description: Description of kinematics
+Version: 0.1.0
+Cflags: -I/home/zhuay/yx_planning_ws/src/kinematics/include
+Libs: -L${prefix}/lib -lkinematics
+Requires: roscpp

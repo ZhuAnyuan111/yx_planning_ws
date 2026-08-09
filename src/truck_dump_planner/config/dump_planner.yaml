@@ -1,0 +1,35 @@
+# 无人挖掘机装车规划节点参数
+# 所有参数位于节点私有命名空间 /dump_planner_node/
+
+# ===== 卡车车厢几何（米）=====
+# 只包络车厢，不考虑车头；卡车中心点即车厢中心
+truck:
+  box_length: 5.0          # 车厢长（纵轴，沿航向）
+  box_width: 2.6           # 车厢宽（横轴）
+  box_height: 1.8          # 车厢侧壁高度
+
+# ===== 挖掘机回转中心（挖掘机系，仅可视化参考点）=====
+# 注：挖掘机工作范围/可达性不由本节点给定，应由运动学求解判断
+excavator:
+  x: 0.0
+  y: 0.0
+
+# ===== 坐标系约定 =====
+frame_id: base                                   # 发布 marker 的坐标系（挖掘机基座系）
+axis_convention: north_west                       # north_west(x北y西,本项目挖掘机系) / east_north(x东y北)
+# 输入 /truck_pose (geometry_msgs/Quaternion)：w 直接为 RTK 方位角 α（角度制，北0顺时针），无需 bearing 约定
+
+# ===== 挖掘轨迹规划参数 =====
+dig:
+  point_x: 3.0               # 挖掘目标点 x（挖掘机系，米）
+  point_y: 0.0               # 挖掘目标点 y
+  point_z: -0.5              # 挖掘目标点 z
+  approach_height: 1.0       # 接近段抬升高度
+  dig_depth: 0.5             # 入土深度
+
+# ===== 复位轨迹规划参数 =====
+reset:
+  home_x: 2.0               # 复位目标位置 x
+  home_y: 0.0               # 复位目标位置 y
+  home_z: 1.5               # 复位目标位置 z
+  safe_height: 3.0           # 安全提升高度
