@@ -1,0 +1,7 @@
+<launch>
+  <rosparam command="load" file="/home/nvidia/unmanned_exca/Sany_and_DataCapture_rs/Sensor/config/param_sy870.yaml" ns="sensor" />
+  <rosparam command="load" file="$(find GP2mid)/config/gp_params.yaml" />
+  <param name="GP2mid/auto_dig_region_yaml_path" value="$(find GP2mid)/config/gp_params.yaml" />
+
+  <node pkg="GP2mid" type="GP2mid_V1_0_node" name="gp2mid_with_params" output="screen" />
+</launch>

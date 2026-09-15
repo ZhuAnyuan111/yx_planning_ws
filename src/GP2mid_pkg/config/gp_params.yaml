@@ -1,0 +1,70 @@
+GP2mid:
+  l_CF: 6.987
+  l_FQ: 2.797
+  l_QV: 2.359
+  l_MN: 0.901
+  l_NQ: 0.643
+  l_KQ: 0.680
+  l_KM: 0.800
+  phi_FQN_deg: 10.46
+  phi_KQV_deg: 104.858
+  phi_BCF_deg: 23.193
+  bkt_width: 1.5
+  base2ground: 2.699
+  IMU_bias_deg: [-1.99, -0.78, 1.09]
+  boom_angle_limit_deg: [-27.18, 59.58]
+  arm_angle_limit_deg: [-152.98, -29.79]
+  bkt_angle_limit_deg: [-116.31, 47.55]
+  boom_pos: [0.09, 0.03, 0.0]
+
+  track_prot: 0.0
+  N_fans: 120
+
+  ground_crash_prot: 0.0
+  max_depth: -1.0
+  ground_setting: 0.0
+  ground_def: 5.699
+
+  use_rtk_ground_def: true
+  rtk_to_swing_center_alt_offset: 1.230
+  ground_protect_alt: 2919.562
+  truck_pose_ground_protect_alt_offset: 1.1
+  rtk_ground_def_ref: 5.699
+  rtk_ground_def_band: 2.0
+
+  auto_dig_region_half_width_deg: 90.0
+  auto_dig_region_near_offset_deg: 10.0
+  auto_dig_region_far_offset_deg: 35.0
+
+  max_pt_height: -8.0
+  min_pt_height: -9.0
+
+  r_limit: [2.0, 10.0]
+
+  # Excavator heading related angles
+  front_lane_deg: 239.609985
+  rear_cable_deg: 59.609985
+  angle_ub_deg: 329.609985
+  angle_lb_deg: 149.609985
+  angle_dig_ub1_deg: 184.609985
+  angle_dig_lb1_deg: 159.609985
+  angle_dig_ub2_deg: 319.609985
+  angle_dig_lb2_deg: 294.609985
+  angle_offset_deg: 90.0
+  dig_region_margin_deg: 10.0
+  danger_zone_margin_deg: 0.0
+
+  target_ub: 3.5
+  target_lb: 3.0
+  edge_extend: 2.0
+
+  extend_angle_deg: 10.0
+  truck_angle_prot_deg: 45.0
+  expnt: 4.0
+  diggable_threshold: 0.15
+
+  unload_distance: 8.0
+  unload_height: 3.0
+
+  digx_min: 7.0
+  turn_point: 8.0

@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>专利技术交底书（v5.1）· 一种基于装载进度的挖掘机卸载点动态选取方法及系统</title>
+<!--
+  用法：浏览器打开 → Ctrl+P → 目标「另存为 PDF」→ 勾选「背景图形」→ 边距默认（@page 已设 A4）。
+  纯 HTML/CSS/SVG，不依赖 CDN/mermaid/插件，离线可开；流程图用 CSS 绘制，卸载效果图用内联 SVG。
+  打开机器需有中文字体（Windows/macOS 自带）。
+-->
+<style>
+  :root{ --blue:#1a2f8f; --red:#b30000; --line:#b9bec7; }
+  *{ box-sizing:border-box; }
+  html,body{ margin:0; padding:0; }
+  body{ background:#e9e9e9; color:#1a1a1a;
+    font-family:"Noto Sans SC","Microsoft YaHei","PingFang SC","Source Han Sans SC","Segoe UI",serif;
+    font-size:13.5px; line-height:1.65; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  .page{ width:180mm; margin:10mm auto; padding:15mm 15mm; background:#fff; box-shadow:0 1px 8px rgba(0,0,0,.25); }
+  h1{ font-size:23px; color:var(--blue); text-align:center; margin:0 0 4px; }
+  .subtitle{ text-align:center; color:#444; margin:0 0 12px; font-size:14px; }
+  h2{ font-size:17px; color:var(--blue); border-left:6px solid var(--blue); padding-left:8px; margin:20px 0 6px; }
+  h3{ font-size:14.5px; color:#22307a; margin:12px 0 4px; }
+  h4{ font-size:13.5px; color:#22307a; margin:10px 0 3px; }
+  p{ margin:5px 0; }
+  strong{ color:var(--red); }
+  code{ font-family:"Consolas","Menlo","DejaVu Sans Mono",monospace; background:#f2f3f5; padding:0 3px; border-radius:3px; font-size:12px; }
+  ul,ol{ margin:5px 0; padding-left:1.4em; } li{ margin:2px 0; }
+  hr{ border:0; border-top:1px dashed #cfd3da; margin:14px 0; }
+  table{ border-collapse:collapse; width:100%; font-size:11.5px; margin:7px 0; table-layout:fixed; }
+  th,td{ border:1px solid var(--line); padding:4px 6px; vertical-align:top; text-align:left; word-break:break-word; overflow-wrap:anywhere; }
+  th{ background:#eef1f5; color:var(--blue); } td.c{text-align:center;}
+  .rev{ background:#eef4ff; border:1px solid #cddcff; border-radius:5px; padding:8px 11px; font-size:12px; margin:8px 0; }
+  .note{ background:#fbf6ec; border-left:4px solid #c9a24b; color:#5a4a24; padding:6px 10px; margin:7px 0; font-size:12px; }
+  .formula{ background:#f6f7f9; border:1px solid #e3e6ea; border-radius:4px; padding:6px 10px; margin:5px 0;
+    font-family:"Consolas","Menlo","DejaVu Sans Mono",monospace; font-size:12px; line-height:1.7; white-space:normal; }
+  .tag{ display:inline-block; background:#fdeeee; color:var(--red); border:1px solid #f0c9c9; border-radius:3px; padding:0 4px; font-size:10.5px; }
+  /* CSS 流程图 */
+  .flow{ text-align:center; margin:8px 0; font-size:11.5px; }
+  .fb{ border:1.4px solid var(--blue); color:var(--blue); background:#eef1f8; border-radius:6px; padding:4px 9px; display:inline-block; min-width:62%; }
+  .fd{ border-style:dashed; background:#fff7e6; color:#8a5a00; border-color:#c9a24b; border-radius:14px; }
+  .ft{ border-color:#b30000; color:#b30000; background:#fdeeee; }
+  .fg{ border-color:#2f7d32; color:#2f7d32; background:#eef7ee; }
+  .fa{ color:#888; line-height:1.1; margin:2px 0; font-size:13px; }
+  .frow{ display:flex; gap:6px; justify-content:center; flex-wrap:wrap; margin:2px 0; }
+  .frow>div{ flex:1; min-width:0; }
+  .fl{ font-size:10.5px; color:#666; }
+  .sub{ display:inline-block; min-width:0; width:100%; }
+  svg{ max-width:100%; height:auto; }
+  .foot{ color:#8a8f98; font-size:11px; margin-top:16px; border-top:1px solid #e3e6ea; padding-top:8px; }
+  @page{ size:A4 portrait; margin:15mm; }
+  @media print{
+    body{ background:#fff; } .page{ width:auto; margin:0; padding:0; box-shadow:none; }
+    h2,h3,h4{ break-after:avoid; } table,.flow,.note,.formula,.rev,svg{ break-inside:avoid; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+<h1>专利技术交底书（v5.1）</h1>
+<p class="subtitle">一种基于装载进度的挖掘机卸载点动态选取方法及系统</p>
+
+<div class="rev">
+<strong>v5.1 修订说明（据评审/领导意见）</strong>：① 将"远密近疏/双重门限/斗数双向保底/三段式映射"等概念性描述<strong>细化为与工程代码 <code>UP.m</code>/<code>unloadP.m</code>/<code>dump_trajectory_node.cpp</code> 一致的公式、判定条件与分支处理</strong>；② 补<strong>真实阈值表</strong>（代码固定值/配置默认/现场标定三类）；③ 主流程图补全<strong>全部判断分支</strong>并增 IK/判满/保底<strong>子流程图</strong>与<strong>判定条件-分支-处理表 A–F</strong>；④ 补<strong>异常处理流程与错误码</strong>；⑤ 新增<strong>多机制联动关系</strong>，创造性主张由"按装载进度选点"上移为"三源交叉校验 + 计数对感知反向否决"；⑥ 补<strong>量化效果</strong>（结构性保证 + 待实机测试占位，未编造数据）；⑦ 增<strong>卸载效果图</strong>；⑧ 增<strong>泄密与脱敏标注（待康院审核）</strong>。<br>
+<strong>实现事实核对</strong>：核心机制 ②③④⑤ 在 <code>matlab/UP.m</code> 真实实现；"远密近疏 <code>t=1-(1-t)^k</code>"在 <code>matlab/unloadP.m</code>（V2.0，已移除满载判断、改 load_num 三段式）实现。二者为并行/演进版本，本交底书主张其<strong>组合实施例</strong>。
+</div>
+
+<h2>1、名称</h2>
+<p>一种基于装载进度的挖掘机卸载点动态选取方法及系统</p>
+
+<hr>
+
+<h2>2、检索报告（找出最接近的现有技术，并进行对比分析）</h2>
+<p><strong>检索关键词</strong>：挖掘机 / 装载机 / 铲装机器人 + 自动装车 / 自主卸料 + 卸料点 / 卸载点 / 装载点 + 车厢 / 矿卡 + 点云 / 料位 / 满斗率 + 可达 / 逆运动学；英文：excavator / loading machine + autonomous truck loading + dump point / loading position + truck bed / load distribution + reachability / inverse kinematics</p>
+<p><strong>IPC 分类号</strong>：E02F 3/43；E02F 9/26；G06T 17/00</p>
+<p><strong>检索式</strong>：S1: (E02F3/43/ic or (挖掘机 or 装载机 or 铲装)/ti,ac,ab) and ((卸载点 or 装载点 or 卸料点)/ti,ac,ab) and ((车厢 or 矿卡 or 点云)/ti,ac,ab)；S2: (excavator or loading machine) and (dump point or loading position) and (truck bed or load distribution)</p>
+<p><strong>检索记录</strong>：</p>
+<table>
+  <colgroup><col style="width:7%"><col style="width:24%"><col style="width:41%"><col style="width:28%"></colgroup>
+  <thead><tr><th class="c">序号</th><th>申请号</th><th>发明名称</th><th>备注</th></tr></thead>
+  <tbody>
+    <tr><td class="c">1</td><td>CN109902857B</td><td>一种运输车辆装载点自动规划方法及系统（徐工）</td><td><strong>最接近（国内，全文级）</strong></td></tr>
+    <tr><td class="c">2</td><td>CN114164877B</td><td>用于装载物料的方法、控制器及挖掘设备（中联重科）</td><td>漏检补充·高度相关（网格卸料位+IK+满载终止）</td></tr>
+    <tr><td class="c">3</td><td>CN115328171B</td><td>装载点位置的生成方法、装置、芯片、终端、设备和介质（慧拓）</td><td>漏检补充·次级结合（矿卡对位+点云避障筛点）</td></tr>
+    <tr><td class="c">4</td><td>US6363632B1</td><td>System for autonomous excavation and truck loading（CMU）</td><td>国际最接近·上位思想·已过期</td></tr>
+    <tr><td class="c">5</td><td>US12216018B2 / US20220314860A1</td><td>System and method for moving material（Deere）</td><td>有效至 2043·逐斗迁移+载荷分布</td></tr>
+    <tr><td class="c">6</td><td>CN120122112A</td><td>一种无人化铲装机器人自主卸料和矿卡满斗率检测装置</td><td>相关</td></tr>
+    <tr><td class="c">7</td><td>CN111733918B</td><td>挖掘机卸料作业辅助系统及轨迹规划方法</td><td>相关</td></tr>
+    <tr><td class="c">8</td><td>CN116088365A</td><td>一种基于视觉的自主挖掘作业卸料点定位系统及方法</td><td>一般</td></tr>
+    <tr><td class="c">9</td><td>CN113309169A</td><td>一种无人驾驶装载机室内自主卸料系统及方法</td><td>一般</td></tr>
+    <tr><td class="c">10</td><td>CN113985873A</td><td>一种装载机自主铲掘作业铲掘点规划方法</td><td>一般</td></tr>
+    <tr><td class="c">11</td><td>US6247538B1 / EP3733981B1 / US12686991</td><td>单个装载位置确定类</td><td>一般</td></tr>
+    <tr><td class="c">12</td><td>NPL：A Robotic Excavator for Autonomous Truck Loading（CMU）</td><td>与 US6363632B1 同源论文</td><td>高</td></tr>
+  </tbody>
+</table>
+<p><strong>检索分析结论 · 本申请与最接近专利的对比分析（领导关注点！）</strong></p>
+<table>
+  <colgroup><col style="width:13%"><col style="width:18%"><col style="width:27%"><col style="width:42%"></colgroup>
+  <thead><tr><th>专利号</th><th>发明名称</th><th>相同点</th><th>不同点（本申请创新点）</th></tr></thead>
+  <tbody>
+    <tr><td>CN109902857B</td><td>运输车辆装载点自动规划方法及系统</td><td>同领域；均以激光雷达点云感知车厢料面；核心构思均为"依料面状态在车厢上方自动选卸载点"；均解决布料不均/撒料</td><td>① <strong>逐候选点求逆解可解性并确定可达域边界</strong>；CN-1 仅"安全卸载范围+车沿距离限制"几何约束。② <strong>点级双门限判满</strong>（点数+局部平均高度+点数不足保守判未满）；CN-1 为深度直方图/凹区域。③ <strong>自最远可达点向近端遍历取首个未满点</strong>；CN-1 为额定载荷%两阶段原则。④ <strong>斗数双向保底</strong>（上限终止+下限不采信全满）；CN-1 单一感知源，无计数反向否决</td></tr>
+    <tr><td>CN114164877B</td><td>用于装载物料的方法、控制器及挖掘设备</td><td>均将车厢离散为多卸料位；均用 IK 使铲斗到位；均有满载判定后终止</td><td>① 本申请<strong>基于每斗实测料面闭环逐斗重选</strong>；其顺序预规划重复（"不需重新建模/重新指定卸料网格"）。② <strong>点级双门限判满</strong> vs 整车总重单一源。③ 本申请有<strong>斗数双向保底</strong>；其无。④ 本申请 IK 用于<strong>筛点定可达域</strong>；其 IK 用于执行到位</td></tr>
+    <tr><td>US6363632B1</td><td>Autonomous excavation and truck loading</td><td>均"感知料面→逐斗迁移卸载点"上位思想；均自主循环装车</td><td>其 load point planner 全文仅"plan a sequence of dump points"一句，未公开单点判满判据、可达性筛选、斗数保底；本申请 ②③④⑤ 均未公开</td></tr>
+    <tr><td>US12216018B2</td><td>System and method for moving material</td><td>均按传感/载荷逐斗迁移卸载位置；均以达容量终止</td><td>① 本申请<strong>挖机侧自主选点</strong> vs 卡车侧第二控制器定位后信令挖机。② <strong>料面点云双门限</strong> vs 物料类型载荷分布先验+称重。③ <strong>由远及近填未满</strong> vs 前/中/后质心目标。④ <strong>斗数双向保底</strong> vs 单一容量/载荷源终止</td></tr>
+  </tbody>
+</table>
+<p>经仔细查看说明书，<strong>CN109902857B</strong>（"一种运输车辆装载点自动规划方法及系统"）为本申请<strong>最接近的现有技术</strong>：单激光雷达同扫铲斗与车厢，对车厢做<strong>三维立体深度直方图</strong>表征凹凸并计算<strong>载荷分布</strong>；权3"通过深度直方图寻找合适的卸载点"；权4/5/6"在铲斗<strong>安全卸载范围</strong>内"规划装载点、按额定载荷%划分<strong>装满/重心两阶段优先</strong>、在"较深较大凹区域"选点。<strong>需特别指出</strong>：其"安全卸载范围"与"两阶段装载优先"使本申请"可达性""基于装载进度"两个上位措辞被部分触及，故创造性必须建立在"逐点逆解可达域筛选 + 点级双门限判满 + 自远及近遍历 + 斗数双向保底"的<strong>具体机制组合及其联动</strong>上（详见 4.1）。</p>
+<p>全文复核另发现两篇漏检、早于本申请的中国授权专利：<strong>CN114164877B（中联重科）</strong>（网格化+IK 到位+整车总重判满，但顺序预规划重复、单一总重源、无斗数保底）；<strong>CN115328171B（慧拓）</strong>（点云避障筛点+取最近可用，但解决矿卡停靠对位而非车厢内卸料点选取）。二者不破坏本申请独权机制组合，作为次级结合文献，答复须预案。</p>
+
+<hr>
+
+<h2>3、背景技术（别人现在是怎么做的？）</h2>
+<p>挖掘机自动装车中"卸载点选在哪里"，现有技术主要六类：（1）<strong>固定点位</strong>；（2）<strong>人工指定</strong>；（3）<strong>满斗率/料位检测辅助</strong>（CN120122112A，仅计量不参与选点）；（4）<strong>轨迹约束点</strong>（CN111733918B）；（5）<strong>感知驱动卸载点序列规划</strong>（US6363632B1、CN109902857B，最接近现有技术）；（6）<strong>网格覆盖式预规划</strong>（CN114164877B，网格化+IK 到位+整车总重判满）。</p>
+<h4>存在的技术问题（缺点）</h4>
+<p>1）<strong>选点与可达域脱节</strong>：固定/人工不校验运动学可达；CN-1"安全卸载范围"仅几何约束、CN114164877B 的 IK 仅执行到位，停偏时选点仍可能不可达。<br>
+2）<strong>判满判据缺失或单一</strong>：深度直方图/整车总重均无点级判据，点云稀疏或尖峰噪点易误判。<br>
+3）<strong>单点失效即整体失败</strong>：均以单一感知源定终止，一次误判即提前终止或持续超装，无计数交叉校验。<br>
+4）<strong>布料顺序非闭环</strong>：预规划重复或按整车载荷%切换，非逐点遍历，易近端堆高、铲斗越料。<br>
+5）<strong>与执行层脱节</strong>：选点结果不直接衔接卸载轨迹。</p>
+
+<hr>
+
+<h2>4、发明内容（针对技术问题提出的技术方案）</h2>
+<p><strong>待解决问题</strong>：1）停偏时保证卸载点<strong>运动学可达</strong>；2）给出<strong>稳定不抖动的点级判满</strong>；3）<strong>单一感知源误判</strong>时维持连续与安全；4）布料<strong>由远及近闭环</strong>；5）选点<strong>直接驱动轨迹</strong>、异常仍有可执行目标。</p>
+<p><strong>总体方案</strong>："<strong>可达域 ∩ 未满域</strong>驱动动态选点、以<strong>斗数双向保底</strong>兜底"。卸载点 = 候选点中同时满足 ①IK <strong>可达</strong>、②点云双门限判<strong>未满</strong>、③布料顺序（<strong>自远及近遍历</strong>）当前轮到的点；任何情形受<strong>斗数双向保底</strong>约束。可达域（几何）、料面（感知）、斗数（计数）三源独立、交叉校验。</p>
+
+<h3>4.1 多机制联动关系（创造性主线 · 回应评审建议2）</h3>
+<p>评审指出"仅按装载进度动态调整卸载点"与 CN109902857B/CN114164877B 重合、作为唯一核心创新点偏弱。本发明创造性<strong>不落在"按进度选点"上位思想</strong>，而落在<strong>三源因果闭环 + 计数对感知反向否决</strong>：</p>
+<ul>
+<li><strong>可达域（几何/IK）→ 约束"能去哪"</strong>：逐点逆解可解性决定可达集合 F 与边界 <code>idx_far</code>，并决定中位兜底点（硬约束前置）。</li>
+<li><strong>感知（点云双门限）→ 定位"哪里还没满"</strong>：仅在 F 内、由远及近判满，感知结论<strong>受可达域裁剪</strong>。</li>
+<li><strong>计数（斗数）→ 独立第二判据，对感知行使否决/终止权</strong>：<code>LoadNums≤MinLoadNum</code> 且感知全判满时<strong>不采信感知</strong>（反向否决，防误停）；<code>LoadNums&gt;MaxLoadNum</code> 时<strong>强制终止</strong>（防超载）。</li>
+<li><strong>交叉兜底</strong>：感知失效→load_num 三段式；可达域不足→两级判定/重新停靠；计数越界→中位点收尾。<strong>任一单源异常仍输出可执行点（永不无解）</strong>。</li>
+</ul>
+<div class="note"><strong>联动命题（形式化）</strong>：设可达域 R、未满域 U（感知）、计数约束 C，则 <code>p* = argfirst_{i∈R, 由远及近}(i∈U)</code>，且经 C 修正：C 可在 U=∅ 时否决"满"结论（下限）、或在计数越界时终止（上限）。三者的<strong>耦合与相互否决</strong>是区别于"单一感知源判满即终止"现有技术（CN-1/CN114164877B/US12216018B2）的实质特征。</div>
+
+<hr>
+
+<h2>5、具体实施方式（公式化 + 判定条件 + 分支处理）</h2>
+
+<h3>5.0 符号与真实参数</h3>
+<table>
+  <colgroup><col style="width:16%"><col style="width:30%"><col style="width:34%"><col style="width:20%"></colgroup>
+  <thead><tr><th>符号</th><th>含义</th><th>值 / 来源</th><th>类别</th></tr></thead>
+  <tbody>
+    <tr><td>N</td><td>候选点数</td><td>21（<code>UP.m</code>/<code>unloadP.m</code> 固定）</td><td>代码固定</td></tr>
+    <tr><td>L_b, L_a, L_k</td><td>动臂/斗杆/铲斗齿长(m)</td><td>6.987 / 2.797 / 2.359（<code>dump_trajectory.yaml</code>）</td><td>配置默认 <span class="tag">敏感·机型几何·待审</span></td></tr>
+    <tr><td>b_x,b_y,b_z</td><td>回转中心→动臂铰点偏置(m)</td><td>0.09 / 0.03 / 0.0</td><td>配置默认</td></tr>
+    <tr><td>关节限位(°)</td><td>boom/arm/bucket</td><td>[-25,50] / [-150,-30] / [-135,30]</td><td>配置默认</td></tr>
+    <tr><td>δ</td><td>关节安全余量(°)</td><td>2（<code>UP.m safe_bias=2</code>）</td><td>代码固定</td></tr>
+    <tr><td>α</td><td>卸载铲斗姿态角(°)</td><td>-90（齿尖朝下，<code>bucket_attitude_deg</code>）</td><td>配置默认</td></tr>
+    <tr><td>β_k</td><td>IK 保底固定斗角(°)</td><td>30（<code>UP.m</code>）/ 25（<code>selector</code>）</td><td>代码固定</td></tr>
+    <tr><td>k</td><td>远密近疏指数</td><td>2.5（<code>unloadP.m</code> V2.0）</td><td>代码固定</td></tr>
+    <tr><td>θ</td><td>矿卡可达阈值</td><td>0.5·N = 10.5（<code>UP.m</code>）</td><td>代码固定</td></tr>
+    <tr><td>R_coff</td><td>入厢回转圆混合系数</td><td>0.5（<code>waypoint_generator.h</code>）</td><td>配置默认</td></tr>
+    <tr><td>L×W</td><td>车厢长×宽(m)</td><td>5.0 × 2.6（<code>dump_trajectory.yaml</code>）</td><td>配置默认</td></tr>
+    <tr><td>T1,T2,T3</td><td>load_num 三段阈值(斗)</td><td>3 / 6 / 9（<code>unloadP.m</code> sel_tag）</td><td>代码固定</td></tr>
+    <tr><td>n_th</td><td>点数门限 <code>num_soilPoint</code></td><td>现场标定</td><td><span class="tag">现场标定·待填</span></td></tr>
+    <tr><td>r_s</td><td>判满检测圆半径 <code>select_soil_radius</code></td><td>现场标定</td><td><span class="tag">现场标定·待填</span></td></tr>
+    <tr><td>Δh_full</td><td>满载高度余量 <code>full_Height_bias</code></td><td>现场标定</td><td><span class="tag">现场标定·待填</span></td></tr>
+    <tr><td>Δh_pc</td><td>点云高度过滤偏置 <code>ptCloudBias</code></td><td>现场标定</td><td><span class="tag">现场标定·待填</span></td></tr>
+    <tr><td>Δ_j</td><td>判满点头部偏移 <code>JudgeFullBias</code></td><td>现场标定</td><td><span class="tag">现场标定·待填</span></td></tr>
+    <tr><td>h_up</td><td>卸载点高度余量 <code>unloadPoint_HeightBias</code></td><td>现场标定</td><td><span class="tag">现场标定·待填</span></td></tr>
+    <tr><td>Max/MinLoadNum</td><td>斗数上/下限</td><td>现场标定</td><td><span class="tag">现场标定·待填</span></td></tr>
+  </tbody>
+</table>
+<p class="fl">说明：现场标定项无代码内数值默认（为 Simulink 运行时输入），<strong>本文不臆造具体数字</strong>，以符号+建议量级给出；对外公开文本建议符号化/给区间（见第 10 节）。</p>
+
+<h3>5.1 步骤 1：候选点生成</h3>
+<div class="formula">
+基线（<code>UP.m</code>，等距）：s_i = linspace(-(L/2+d_start), (L/2+d_end), N), i=1..N<br>
+　p_i = ( c_x + s_i·cosψ,　c_y + s_i·sinψ,　c_z + H/2 + h_up )　　（ψ=矿卡航向角, c=车厢中心）<br>
+优选改进（<code>unloadP.m</code> V2.0，远密近疏）：t_raw=(i-1)/(N-1),　t = 1 - (1 - t_raw)^k, k=2.5<br>
+　p_i = p_near + t·(p_far - p_near)　（z 取 p_near_z）
+</div>
+<p><strong>动机</strong>：布料由远及近，远端最先触及可达域边界，加密远端提高 <code>idx_far</code> 判定精度。等距与远密近疏均落入权利要求①。</p>
+
+<h3>5.2 步骤 2：逐点 IK 可解性筛选，定可达域边界</h3>
+<div class="formula">
+主解（给定姿态角 α）：swing = mod(atan2d(y,x)+180, 360)；x_1=(x-b_x·cos·)/cos·（含 swing=±90° 特例）, z_1=z-b_z<br>
+　x_3=x_1-L_k'·cosα, z_3=z_1-L_k'·sinα（L_k'=L_k·bucket_bias）；l_5=√(x_1²+z_1²), l_6=√(x_3²+z_3²)<br>
+　cosβ=(l_5²+l_6²-L_k'²)/(2 l_5 l_6),　cosα_=(L_b²+l_6²-L_a²)/(2 L_b l_6)<br>
+　boom=atan2d(z_1,x_1)+acosd(cosβ)+acosd(cosα_)；arm=acosd((L_b²+L_a²-l_6²)/(2 L_b L_a))-180；bucket=α-boom-arm<br>
+保底解（主解失败，固定斗角 β_k=30°/25°）：关节-铲斗联合逆解（FV/CV + 余弦定理），同过可解性与限位判据<br>
+可达域：F={i | feasibility_i=1}；idx_near=min F, idx_far=max F（可达域边界）；mid=F(round(|F|/2))
+</div>
+<h4>表 A · IK 可解性判定条件与分支</h4>
+<table>
+  <colgroup><col style="width:20%"><col style="width:38%"><col style="width:42%"></colgroup>
+  <thead><tr><th>判据</th><th>条件</th><th>分支处理</th></tr></thead>
+  <tbody>
+    <tr><td>C1 可解性</td><td>|cosβ|≤1 且 |cosα_|≤1</td><td>否 → feasibility=0（不可解）</td></tr>
+    <tr><td>C2 限位余量</td><td>boom,arm,bucket 均 ∈ [lo+δ, hi-δ]</td><td>否 → feasibility=0</td></tr>
+    <tr><td>主解失败</td><td>C1 或 C2 不满足</td><td>触发保底解（固定斗角 β_k 联合逆解）重判</td></tr>
+    <tr><td>保底仍失败</td><td>—</td><td>feasibility=0，剔除该点</td></tr>
+  </tbody>
+</table>
+<div class="note"><strong>区别点</strong>：逆解可解性作为候选点<strong>准入条件并据此确定可达域边界</strong>，区别于 CN-1 几何安全范围、CN114164877B 执行期逆解。</div>
+
+<h3>5.3 步骤 3：矿卡可达性两级判定</h3>
+<h4>表 B · 两级判定（阈值 θ=0.5·N=10.5）</h4>
+<table>
+  <colgroup><col style="width:14%"><col style="width:48%"><col style="width:38%"></colgroup>
+  <thead><tr><th>级</th><th>条件</th><th>处理</th></tr></thead>
+  <tbody>
+    <tr><td>前置</td><td>num_feasible == 0</td><td>TruckFeasible=0，error 返回，请求重新停靠</td></tr>
+    <tr><td>L1</td><td>idx_far &gt; θ</td><td>TruckFeasible=1（可达）</td></tr>
+    <tr><td>L2</td><td>1 ≤ idx_far ≤ θ 且 SoilFullInPoint(round(θ))==1</td><td>TruckFeasible=1（远端不可达但阈值位已装满，豁免）</td></tr>
+    <tr><td>否则</td><td>—</td><td>TruckFeasible=0，终止本卡（error2），请求重新停靠</td></tr>
+  </tbody>
+</table>
+
+<h3>5.4 步骤 4：点云双重门限判满（<code>JudgeSoilFullInPoint</code>，主实施方式）</h3>
+<div class="formula">
+点云预过滤：P' = { p∈P | z ≤ z_plane + Δh_pc }，z_plane = c_z + H/2（去除高于车厢平面+偏置的点，抑噪/去铲斗）<br>
+判满中心（沿车头偏移）：g_i = ( p_i.x + Δ_j·cosψ, p_i.y + Δ_j·sinψ )<br>
+圆域：Ω_i = { p∈P' | ‖p_xy − g_i,xy‖₂ &lt; r_s }，n_i = |Ω_i|；z_full = z_plane + Δh_full
+</div>
+<h4>表 C · 双门限判满判定条件与分支</h4>
+<table>
+  <colgroup><col style="width:16%"><col style="width:34%"><col style="width:18%"><col style="width:32%"></colgroup>
+  <thead><tr><th>门限</th><th>条件</th><th>判定</th><th>设计意图</th></tr></thead>
+  <tbody>
+    <tr><td>门限1 点数</td><td>n_i ≤ n_th</td><td><strong>未满</strong>（不算高度）</td><td>点云稀疏不采信高度，<strong>保守取向</strong>（防稀疏误判为满）</td></tr>
+    <tr><td>门限2 高度</td><td>n_i &gt; n_th 且 h̄_i=mean(Ω_i 的 z) ≤ z_full</td><td><strong>未满</strong></td><td>用<strong>局部平均高度</strong>抑尖峰噪点</td></tr>
+    <tr><td>门限2 高度</td><td>n_i &gt; n_th 且 h̄_i &gt; z_full</td><td><strong>已满</strong></td><td>—</td></tr>
+    <tr><td>跨轮继承</td><td>上轮 SoilFullInPoint_(i)==1</td><td>本轮直接=已满，不重复检测</td><td>防相邻轮次结论抖动翻转</td></tr>
+  </tbody>
+</table>
+<p class="fl">两道门限<strong>方向相反、各挡一类误判</strong>（稀疏→门限1；尖峰→门限2 取均值）；区别于 CN-1 深度直方图/凹区域、CN114164877B 整车总重单一源。</p>
+
+<h3>5.4′ 步骤 4′：降级——load_num 三段式映射（<code>unloadP.m</code> V2.0）</h3>
+<table>
+  <colgroup><col style="width:40%"><col style="width:60%"></colgroup>
+  <thead><tr><th>条件（累计装载次数 load_num）</th><th>选点（可达域三分代表点 far/mid/near，mid=第 round(num_feasible/2) 个可达点）</th></tr></thead>
+  <tbody>
+    <tr><td>load_num &lt; T1(3)</td><td>最远可达点 far</td></tr>
+    <tr><td>T1 ≤ load_num &lt; T2(6)</td><td>中位可达点 mid</td></tr>
+    <tr><td>T2 ≤ load_num &lt; T3(9)</td><td>最近可达点 near</td></tr>
+    <tr><td>load_num ≥ T3(9)</td><td>中位可达点 mid（兜底）</td></tr>
+  </tbody>
+</table>
+
+<h3>5.5 步骤 5：自远及近遍历选点</h3>
+<h4>表 D · 遍历分支（<code>for i = N : −1 : 1</code>，由远及近）</h4>
+<table>
+  <colgroup><col style="width:42%"><col style="width:58%"></colgroup>
+  <thead><tr><th>情形</th><th>处理</th></tr></thead>
+  <tbody>
+    <tr><td>feasibility_i=0（不可达）</td><td>跳过（标记未满不可达）</td></tr>
+    <tr><td>可达且上轮已满（继承）</td><td>视为已满，继续向近端</td></tr>
+    <tr><td>可达且判<strong>未满</strong></td><td><strong>选 p_i 为当前卸载点，输出 q_i，break</strong></td></tr>
+    <tr><td>遍历至 i=1 仍无未满点</td><td>TruckFullFlag=1，进入步骤 6 校验</td></tr>
+  </tbody>
+</table>
+
+<h3>5.6 步骤 6：斗数双向保底（第一区别特征锚点）</h3>
+<h4>表 E · 双向保底决策（中位可达点 mid = p_F(round(|F|/2))）</h4>
+<table>
+  <colgroup><col style="width:16%"><col style="width:34%"><col style="width:32%"><col style="width:18%"></colgroup>
+  <thead><tr><th>分支</th><th>条件</th><th>处理</th><th>目的</th></tr></thead>
+  <tbody>
+    <tr><td>上限保底</td><td>LoadNums &gt; MaxLoadNum</td><td>取中位点 mid 执行最后一斗并结束</td><td><strong>防超载</strong></td></tr>
+    <tr><td>下限保底</td><td>全部判满（∄i:SoilFullInPoint_i=0）且 LoadNums ≤ MinLoadNum</td><td><strong>不采信"全满"结论</strong>，取 mid 继续，TruckFullFlag=0</td><td><strong>防感知误判提前终止</strong></td></tr>
+    <tr><td>真满收尾</td><td>全部判满且 MinLoadNum &lt; LoadNums ≤ MaxLoadNum</td><td>TruckFullFlag=1，取 mid 收尾</td><td>正常装满</td></tr>
+    <tr><td>正常</td><td>存在未满点</td><td>保持步骤 5 所选点</td><td>—</td></tr>
+  </tbody>
+</table>
+<div class="note"><strong>任何 return 路径 unloadPoint 均有值（mid 兜底）→ 系统永不无解。</strong> ⑤为全案最强、最干净区别特征：四篇最接近文献均单一感知源判满即终止，<strong>无"计数反向否决感知结论"逻辑</strong>。</div>
+
+<h3>5.7 步骤 7：调度执行与回转圆入厢衔接点</h3>
+<div class="formula">
+调度状态机（multi_unload_scheduler.m）：loadingFlag 触发→选点→由远及近逐点执行；dump_done_flag 触发复位、reset_done_flag 触发下一次卸载<br>
+入厢衔接（calc_entry_point_circle_strategy）：dig_end=FK(start_joint) 齿尖 XY；R1=‖dig_end‖, R2=‖unloadPoint_xy‖<br>
+　R = R_coff·R1 + (1−R_coff)·R2（R_coff=0.5）；R&lt;1e−6 → flag=0 退化，入厢点=unloadPoint_xy<br>
+　圆∩车厢矩形（局部系 L×W）四边：有交点→沿 rot_dir 取与 dig_end swing 角差最小交点（flag=1）；无交点→最近边投影点（flag=2）
+</div>
+
+<h3>5.8 异常处理流程与错误码（表 F · 真实代码）</h3>
+<table>
+  <colgroup><col style="width:10%"><col style="width:34%"><col style="width:38%"><col style="width:18%"></colgroup>
+  <thead><tr><th>层级</th><th>触发条件</th><th>处理</th><th>来源</th></tr></thead>
+  <tbody>
+    <tr><td>选点</td><td>loadingFlag==2</td><td>重置 SoilFullInPoint=0（新一车）</td><td><code>UP.m</code></td></tr>
+    <tr><td>选点</td><td>loadingFlag≤0.57</td><td>跳过 IK 计算</td><td><code>unloadP.m</code></td></tr>
+    <tr><td>选点</td><td>num_feasible==0</td><td>TruckFeasible=0，error 返回，请求重新停靠</td><td><code>UP.m</code></td></tr>
+    <tr><td>选点</td><td>入厢 flag==0（R 退化）</td><td>入厢点回退为 unloadPoint_xy</td><td><code>UP.m</code></td></tr>
+    <tr><td>执行</td><td>CheckReachable 失败</td><td>ReportFeasible(false) + <strong>error_code=1</strong>（卡车位置无法卸载）</td><td><code>dump_trajectory_node.cpp</code></td></tr>
+    <tr><td>执行</td><td>GenerateDumpWaypoints 失败（WP4 IK）</td><td><strong>error_code=2</strong>（轨迹规划失败）</td><td>同上</td></tr>
+    <tr><td>执行</td><td>航路点 clamp 修正量 &gt; waypoint_clamp_abort_deg(5°)</td><td>判上游不可信，<strong>终止激活</strong></td><td><code>dump_trajectory.yaml</code></td></tr>
+    <tr><td>执行</td><td>段完成判定</td><td>需连续 segment_confirm_frames(3) 帧确认（防液压振荡误判）</td><td>同上</td></tr>
+    <tr><td>执行</td><td>段耗时 &gt; 预期×segment_timeout_factor(2.0)</td><td>强制推进下一段</td><td>同上</td></tr>
+    <tr><td>执行</td><td>铲斗高度门控未达 truck_top_height(2.0)+clear_margin(1.8)</td><td>gate_timeout(4s) 后自动提升 boom gate_boost(3°)，最多 gate_max_boost_count(6) 次；仍不达→终止卸载</td><td>同上</td></tr>
+    <tr><td>执行</td><td>运行期中止</td><td><strong>error_code=3</strong>（ReportExecutionAbort），区别于正常完成 FinishFlag=1.0</td><td><code>status_reporter.h</code></td></tr>
+    <tr><td>全局</td><td>超时 total_timeout_sec(30s)；发布 publish_rate(10Hz)</td><td>超时保护 / 固定节拍发布</td><td><code>dump_trajectory.yaml</code></td></tr>
+  </tbody>
+</table>
+
+<h3>5.9 系统模块（图 8）</h3>
+<p>候选点生成 → IK 可达性筛选 → 矿卡可达性判定 → 双门限判满（含满载跨轮继承）→ 由远及近选点 → 斗数双向保底 → 调度与入厢衔接；执行层含段完成确认、超时推进、高度门控重试、clamp 中止与错误码上报（七模块 + 执行异常链）。</p>
+
+<hr>
+
+<h2>6、本发明的优点（含量化效果）</h2>
+<p>1）<strong>选出即必然可达</strong>：卸载点必取自 F（IK 可解+限位余量 δ），构造性保证；停偏时在缩小后可达域内选点。<br>
+2）<strong>布料与实际料面闭环</strong>：双门限判满直接驱动下一点，先堆高区自动跳过，避免堆高/撒料/越料。<br>
+3）<strong>双重门限拦截两类误判</strong>：门限1 防稀疏、门限2（均值）防尖峰，方向相反；跨轮继承防翻转。<br>
+4）<strong>感知与计数互为冗余</strong>：下限保底防误停、上限保底防超载；点云不可用降级三段式。<br>
+5）<strong>永不无解 + 选点与轨迹一体化衔接</strong>：异常路径输出中位可达点；同时输出入厢衔接点，无缝对接下游轨迹。</p>
+
+<h3>6.1 量化效果</h3>
+<h4>A. 结构性可保证指标（由算法构造直接成立）</h4>
+<table>
+  <colgroup><col style="width:26%"><col style="width:46%"><col style="width:28%"></colgroup>
+  <thead><tr><th>指标</th><th>保证方式</th><th>结论</th></tr></thead>
+  <tbody>
+    <tr><td>卸载点可达率</td><td>仅从 IK 可解+限位余量的 F 中选点</td><td>100%（构造性）</td></tr>
+    <tr><td>稀疏误判拦截</td><td>门限1：n_i≤n_th 强制判未满</td><td>结构性拦截</td></tr>
+    <tr><td>尖峰误判拦截</td><td>门限2：用局部均值而非单点最高</td><td>结构性抑制</td></tr>
+    <tr><td>结论抖动</td><td>满载跨轮继承</td><td>相邻轮不翻转</td></tr>
+    <tr><td>误停 / 超载</td><td>下限 / 上限双向保底</td><td>双向防护</td></tr>
+    <tr><td>无解率</td><td>所有 return 输出中位点</td><td>0（永不无解）</td></tr>
+  </tbody>
+</table>
+<h4>B. 待实机测试填充指标（占位，未编造数据）</h4>
+<table>
+  <colgroup><col style="width:34%"><col style="width:44%"><col style="width:22%"></colgroup>
+  <thead><tr><th>指标</th><th>采集方法</th><th>数据</th></tr></thead>
+  <tbody>
+    <tr><td>停偏工况选点成功率</td><td>注入 ±X cm 停靠偏差，统计成功选点/装车</td><td>【待测试填充】</td></tr>
+    <tr><td>单斗判满准确率 / 两类误判拦截次数</td><td>对比人工标注料面与算法判定</td><td>【待测试填充】</td></tr>
+    <tr><td>方量利用率 / 满载率</td><td>装车方量 ÷ 车厢额定方量</td><td>【待测试填充】</td></tr>
+    <tr><td>平均装车斗数与节拍</td><td>统计每车斗数与单循环耗时</td><td>【待测试填充】</td></tr>
+    <tr><td>感知失效降级可用率</td><td>遮蔽点云，统计 load_num 降级下完成率</td><td>【待测试填充】</td></tr>
+  </tbody>
+</table>
+<div class="note">请提供上述实机/台架测试数据以替换占位；<strong>在获得真实数据前不填入任何具体数值</strong>（避免不可靠的量化表述进入专利稿）。</div>
+
+<hr>
+
+<h2>7、本发明的关键点和保护点（领导最关注点）</h2>
+<p><strong>独立权利要求 1（方法）必要技术特征</strong>：</p>
+<p><strong>①</strong> 候选点生成：沿车厢中心线生成 N 个候选点，呈<strong>远密近疏</strong>非线性分布（优选 <code>t=1-(1-t_raw)^k, k&gt;1</code>），按矿卡实测位姿变换至挖机坐标系；<br>
+<strong>②</strong> 可达域确定：对候选点<strong>逐一求逆运动学并以逆解可解性作为准入条件</strong>（主解+固定斗角保底解），按带安全余量 δ 的关节限位校验，得可达集合 F 及<strong>可达域边界 idx_far</strong>；<br>
+<strong>③</strong> 双重门限判满：以沿车头偏移的预设圆域内点云判定——点数<strong>大于</strong>门限时算局部平均高度，不大于 z_plane+Δh_full 判未满、否则已满；点数<strong>不大于</strong>门限时判未满（三要素完整）；<br>
+<strong>④</strong> 由远及近遍历：自 idx_far 向 idx_near 遍历，取首个未满可达点为当前卸载点并输出关节角；<br>
+<strong>⑤</strong> 斗数双向保底（第一区别特征锚点）：<code>LoadNums&gt;MaxLoadNum</code> 强制结束并取中位点执行最后一斗；全部判满但 <code>LoadNums≤MinLoadNum</code> 时<strong>不采信已满判定</strong>、取中位点继续。</p>
+<p><strong>从属保护点（退路）</strong>：⑥满载跨轮继承；⑦检测圆域限定（车头偏移+半径+算术均值）；⑧分布函数式与 N/k 优选值；⑨IK 双重筛选（α 主解+β_k 保底+δ 余量）；⑩矿卡可达两级判定（idx_far vs 0.5N + 阈值位装满豁免）；⑪遍历毕全满且斗数大于下限时判整车装满；⑫降级 load_num 三段式；⑬中位点全兜底；⑭多点多次调度状态机；⑮回转圆入厢衔接点；⑯系统权利要求（七模块）与计算机可读存储介质；⑰<strong>执行层异常处理链</strong>（段确认帧/超时推进/高度门控重试/clamp 中止/错误码 1-2-3）作为系统从属。</p>
+<div class="note"><strong>布局说明</strong>：③④⑤为核心区别且<strong>互为因果</strong>（判满→遍历方向→保底校验），以 4.1 <strong>三源联动/反向否决</strong>为创造性主线；<strong>⑤最强最干净</strong>，置于论证最前；②措辞收紧为"以逆解可解性筛选候选点并确定可达域边界"。<strong>不保护</strong>"感知料面→选卸载点"上位思想（已被 CN109902857B/US6363632B1 公开）。</div>
+
+<hr>
+
+<h2>8、替代方式</h2>
+<p>1）N=21→N≥5 任意值；分布函数→任意远密近疏函数（指数/分段线性），退化为均匀分布亦落入主线；2）候选线→中心线两侧多排；高度→按车型配置；3）IK 解析解→数值迭代/几何法；β_k 可在 20°~30° 取值；4）进度评估→点云双门限+load_num 组合，或车厢称重/料位雷达；门限→中值高度/高度方差/按物料类型切换；5）布料顺序→由近及远（短回转）/交替；Max/Min 斗数→按额定方量换算；6）调度→任意 K×M 或单点单次退化；入厢衔接→直接取卸载点/固定半径圆弧；7）场景→装载机、电铲装卡车等。</p>
+
+<hr>
+
+<h2>9、附图</h2>
+
+<h3>图 1：方法总体流程图（含全部判断分支）</h3>
+<div class="flow">
+  <div class="fb">loadingFlag 触发</div>
+  <div class="fa">↓</div>
+  <div class="fb fd">loadingFlag == 2 ?</div>
+  <div class="frow">
+    <div><div class="fl">是 ↓</div><div class="fb ft sub">重置 SoilFullInPoint=0（新一车）→ 返回</div></div>
+    <div><div class="fl">否 / ==1 ↓</div><div class="fb sub">步骤1 生成 N=21 候选点（等距 或 远密近疏 t=1-(1-t)^2.5）</div></div>
+  </div>
+  <div class="fa">↓</div>
+  <div class="fb">步骤2 逐点 IK：主解 α=-90° → 失败则固定斗角 30/25° 保底；限位余量 δ=2°</div>
+  <div class="fa">↓</div>
+  <div class="fb fd">num_feasible 大于 0 ?</div>
+  <div class="frow">
+    <div><div class="fl">否 ↓</div><div class="fb ft sub">TruckFeasible=0（error）· 请求重新停靠 → 结束</div></div>
+    <div><div class="fl">是 ↓</div><div class="fb sub">idx_near=minF, idx_far=maxF（可达域边界）；mid=中位可达点</div></div>
+  </div>
+  <div class="fa">↓</div>
+  <div class="fb fd">idx_far 大于 0.5N ?　否→ 阈值位 round(0.5N) 已装满 ?</div>
+  <div class="frow">
+    <div><div class="fl">两级均不满足 ↓</div><div class="fb ft sub">TruckFeasible=0 · 终止本卡（error2）</div></div>
+    <div><div class="fl">满足其一 ↓</div><div class="fb fg sub">TruckFeasible=1</div></div>
+  </div>
+  <div class="fa">↓</div>
+  <div class="fb fd">点云可用 ?</div>
+  <div class="frow">
+    <div><div class="fl">是 ↓</div><div class="fb sub">步骤4 双门限判满（预过滤 z≤z_plane+Δh_pc）→ 步骤5 for i=N:-1:1 由远及近：继承已满/跳过不可达/取首个未满</div></div>
+    <div><div class="fl">否·降级 ↓</div><div class="fb sub">步骤4′ load_num 三段式（far/mid/near，T=3/6/9）</div></div>
+  </div>
+  <div class="fa">↓</div>
+  <div class="fb fd">步骤6 斗数双向保底</div>
+  <div class="frow">
+    <div><div class="fl">LoadNums&gt;Max</div><div class="fb ft sub">上限保底：mid 收尾（防超载）</div></div>
+    <div><div class="fl">全判满 且 ≤Min</div><div class="fb fg sub">下限保底：不采信全满，mid 继续</div></div>
+    <div><div class="fl">全判满 且 Min&lt;·≤Max</div><div class="fb sub">真满：TruckFullFlag=1，mid 收尾</div></div>
+    <div><div class="fl">存在未满</div><div class="fb sub">保持步骤5所选点</div></div>
+  </div>
+  <div class="fa">↓</div>
+  <div class="fb">步骤7 入厢衔接点：R=0.5·R1+0.5·R2，圆∩厢矩形；flag=0 退化=unloadPoint</div>
+  <div class="fa">↓</div>
+  <div class="fb fg">输出 unloadPoint + joints + entry</div>
+</div>
+
+<h3>图 1a：IK 双重求解子流程</h3>
+<div class="flow">
+  <div class="fb">候选点 p_i → 主解（姿态角 α=-90°）</div>
+  <div class="fa">↓</div>
+  <div class="fb fd">|cosβ|≤1 且 |cosα_|≤1 ?　→　boom/arm/bucket ∈ [限位±δ] ?</div>
+  <div class="frow">
+    <div><div class="fl">任一否 ↓</div><div class="fb sub">保底解：固定斗角 β_k=30/25° 联合逆解</div><div class="fa">↓</div><div class="fb fd">可解 且 限位±δ 通过 ?</div><div class="frow"><div><div class="fl">是</div><div class="fb fg sub">feasibility=1, 输出 q_i</div></div><div><div class="fl">否</div><div class="fb ft sub">feasibility=0, 剔除</div></div></div></div>
+    <div><div class="fl">全是 ↓</div><div class="fb fg sub">feasibility=1, 输出 q_i</div></div>
+  </div>
+</div>
+
+<h3>图 1b：点云双门限判满子流程</h3>
+<div class="flow">
+  <div class="fb">可达点 p_i</div><div class="fa">↓</div>
+  <div class="fb fd">上轮已判满 ?</div>
+  <div class="frow">
+    <div><div class="fl">是 ↓</div><div class="fb ft sub">继承=已满，不重复检测</div></div>
+    <div><div class="fl">否 ↓</div><div class="fb sub">预过滤 z≤z_plane+Δh_pc；判满中心沿车头偏移 Δ_j；圆域 Ω_i 半径 r_s，点数 n_i</div><div class="fa">↓</div><div class="fb fd">n_i ≤ n_th ?</div><div class="frow"><div><div class="fl">是（稀疏）</div><div class="fb fg sub">判未满（保守）</div></div><div><div class="fl">否 ↓</div><div class="fb sub">h̄_i=mean(Ω_i 的 z)</div><div class="fa">↓</div><div class="fb fd">h̄_i ≤ z_plane+Δh_full ?</div><div class="frow"><div><div class="fl">是</div><div class="fb fg sub">未满</div></div><div><div class="fl">否</div><div class="fb ft sub">已满</div></div></div></div></div></div>
+  </div>
+</div>
+
+<h3>图 1c：斗数双向保底决策</h3>
+<div class="flow">
+  <div class="fb">遍历/降级得到候选结论</div><div class="fa">↓</div>
+  <div class="fb fd">LoadNums 大于 MaxLoadNum ?</div>
+  <div class="frow">
+    <div><div class="fl">是 ↓</div><div class="fb ft sub">上限保底：mid 收尾（防超载）</div></div>
+    <div><div class="fl">否 ↓</div><div class="fb fd">全部点判满 ?</div><div class="frow"><div><div class="fl">否</div><div class="fb fg sub">采用步骤5所选未满点</div></div><div><div class="fl">是 ↓</div><div class="fb fd">LoadNums ≤ MinLoadNum ?</div><div class="frow"><div><div class="fl">是</div><div class="fb fg sub">下限保底：不采信全满，mid 继续</div></div><div><div class="fl">否</div><div class="fb ft sub">真满：TruckFullFlag=1，mid 收尾</div></div></div></div></div></div>
+  </div>
+</div>
+
+<h3>图 9a：卸载效果图（示意 · 车厢俯视）</h3>
+<svg viewBox="0 0 760 250" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="卸载效果图示意">
+  <rect x="10" y="10" width="740" height="230" fill="#fff" stroke="#e3e6ea"/>
+  <!-- 车厢 -->
+  <rect x="60" y="55" width="640" height="110" fill="#f7f8fa" stroke="#1a2f8f" stroke-width="2"/>
+  <text x="66" y="48" font-size="13" fill="#1a2f8f">车头（远端 · 候选点密）</text>
+  <text x="600" y="48" font-size="13" fill="#1a2f8f">车尾（近端 · 疏）</text>
+  <!-- 中心线 -->
+  <line x1="70" y1="110" x2="690" y2="110" stroke="#b9bec7" stroke-dasharray="4 3"/>
+  <!-- 可达域边界 idx_far -->
+  <line x1="94" y1="60" x2="94" y2="160" stroke="#2f7d32" stroke-width="1.6" stroke-dasharray="5 3"/>
+  <text x="70" y="176" font-size="11" fill="#2f7d32">可达域边界 idx_far</text>
+  <!-- 已满点（红） -->
+  <g fill="#b30000">
+    <circle cx="80" cy="110" r="5"/><circle cx="94" cy="110" r="5"/><circle cx="108" cy="110" r="5"/>
+    <circle cx="122" cy="110" r="5"/><circle cx="136" cy="110" r="5"/><circle cx="150" cy="110" r="5"/>
+  </g>
+  <!-- 选中点 p*（绿，大） -->
+  <circle cx="164" cy="110" r="8" fill="#2f7d32" stroke="#fff" stroke-width="2"/>
+  <text x="140" y="92" font-size="12" fill="#2f7d32" font-weight="bold">首个未满 = 当前卸载点 p*</text>
+  <!-- 未满候选点（灰，远密近疏） -->
+  <g fill="#9aa0aa">
+    <circle cx="178" cy="110" r="4.5"/><circle cx="192" cy="110" r="4.5"/><circle cx="206" cy="110" r="4.5"/>
+    <circle cx="230" cy="110" r="4.5"/><circle cx="258" cy="110" r="4.5"/><circle cx="290" cy="110" r="4.5"/>
+    <circle cx="326" cy="110" r="4.5"/><circle cx="366" cy="110" r="4.5"/><circle cx="410" cy="110" r="4.5"/>
+    <circle cx="458" cy="110" r="4.5"/><circle cx="510" cy="110" r="4.5"/><circle cx="566" cy="110" r="4.5"/>
+    <circle cx="626" cy="110" r="4.5"/><circle cx="686" cy="110" r="4.5"/>
+  </g>
+  <!-- 布料方向箭头 -->
+  <line x1="90" y1="196" x2="670" y2="196" stroke="#1a2f8f" stroke-width="2" marker-end="url(#arw)"/>
+  <defs><marker id="arw" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#1a2f8f"/></marker></defs>
+  <text x="300" y="214" font-size="12" fill="#1a2f8f">布料方向：由远及近（自 idx_far 向近端遍历取首个未满）</text>
+  <!-- 图例 -->
+  <g font-size="11">
+    <circle cx="80" cy="234" r="5" fill="#b30000"/><text x="90" y="238" fill="#555">已满（含跨轮继承）</text>
+    <circle cx="230" cy="234" r="6" fill="#2f7d32"/><text x="242" y="238" fill="#555">选中卸载点 p*</text>
+    <circle cx="380" cy="234" r="4.5" fill="#9aa0aa"/><text x="390" y="238" fill="#555">未满候选点（远密近疏，共 N=21）</text>
+  </g>
+</svg>
+<p class="fl">图 9a 为<strong>示意图</strong>（纯 SVG，离线可渲染）：车厢中心线 21 候选点远密近疏，红=已满（含跨轮继承），绿=由远及近遍历命中的首个未满点 p*，虚线=可达域边界 idx_far。<strong>三源</strong>：可达域∩未满域选点，斗数双向保底兜底。</p>
+<p><strong>图 9b（真图占位）</strong>：【待补·RViz/点云实拍】插入实机或仿真的车厢料面点云 + 候选点 + 选中卸载点截图（建议用示意图或<strong>脱敏截图</strong>，避免含真实工地坐标/背景，<span class="tag">待康院审核</span>）。</p>
+<p class="fl"><strong>其余附图</strong>：图 2 候选点远密近疏分布与可达域边界；图 3 IK 双重筛选（见图 1a）；图 4 双门限判满（见图 1b）；图 5 降级三段式映射；图 6 斗数双向保底（见图 1c）；图 7 与最接近现有技术对比；图 8 系统架构（七模块 + 执行异常链）。</p>
+
+<hr>
+
+<h2>10、泄密与脱敏标注（待康院审核）</h2>
+<table>
+  <colgroup><col style="width:34%"><col style="width:26%"><col style="width:40%"></colgroup>
+  <thead><tr><th>敏感项</th><th>位置</th><th>脱敏建议</th></tr></thead>
+  <tbody>
+    <tr><td>机型几何精确值（L_b/L_a/L_k、偏置、限位）</td><td>5.0 表</td><td>专利需充分公开，可保留；如敏感则符号化/给量级区间</td></tr>
+    <tr><td>RTK 绝对高程基准（<code>ground_protect_alt=2919.562</code>、<code>rtk_to_swing_center_alt_offset=1.230</code>）</td><td><code>GP2mid_pkg/config/gp_params.yaml</code></td><td><strong>建议不写入公开文本</strong>；仅描述"以 RTK 高程基准做地面保护"，不给绝对值</td></tr>
+    <tr><td>现场标定阈值（n_th、r_s、Δh_full、Δh_pc、Δ_j、h_up、Max/MinLoadNum）</td><td>5.0 表</td><td>公开文本用符号 + 建议区间，不给产线精确值</td></tr>
+    <tr><td>车厢实测尺寸 / 真实工地坐标</td><td>图 9b 真图</td><td>用示意图或脱敏截图，去除真实坐标/背景</td></tr>
+  </tbody>
+</table>
+<div class="note">本节所列尺度<strong>最终以康院审核为准</strong>；文中相应处已标 <span class="tag">敏感·待审</span> / <span class="tag">现场标定·待填</span>。</div>
+
+<div class="foot">
+<strong>文档版本</strong>：v5.1（据评审/领导意见细化：公式化建模、真实阈值表、判定分支表 A–F、异常处理与错误码、多机制联动主线、量化效果占位、卸载效果图、泄密脱敏标注；核实现核心机制在 <code>UP.m</code>、远密近疏在 <code>unloadP.m</code> V2.0）<br>
+<strong>历史版本</strong>：v5.0（九节模板重排）；v4.1（全文复核修订）；v4.0（真实检索强化）；v3.0（方案 A 收窄独权）<br>
+<strong>创建</strong>：2026-09-04　<strong>修订</strong>：2026-09-15<br>
+<strong>代码依据</strong>：<code>dump_trajectory_planner/matlab/UP.m</code>、<code>unloadP.m</code>、<code>multi_unload_selector.m</code>、<code>multi_unload_scheduler.m</code>、<code>test_reachability.m</code>；<code>config/dump_trajectory.yaml</code>；<code>src/dump_trajectory_node.cpp</code>、<code>waypoint_generator.cpp</code>、<code>dump_feasibility.cpp</code>；<code>GP2mid_pkg/config/gp_params.yaml</code>
+</div>
+
+</div>
+</body>
+</html>
