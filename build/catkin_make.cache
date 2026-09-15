@@ -1,2 +1,0 @@
-dig_trajectory_planner:dump_trajectory_planner:kinematics:reset_trajectory_planner:truck_dump_planner
--DCATKIN_WHITELIST_PACKAGES=dump_trajectory_planner -DCATKIN_DEVEL_PREFIX=/home/zhuay/yx_planning_ws/devel -DCMAKE_INSTALL_PREFIX=/home/zhuay/yx_planning_ws/install -G Unix Makefiles

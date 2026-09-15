@@ -1,8 +1,0 @@
-prefix=/home/zhuay/yx_planning_ws/devel
-
-Name: reset_trajectory_planner
-Description: Description of reset_trajectory_planner
-Version: 0.1.0
-Cflags: -I/home/zhuay/yx_planning_ws/src/reset_trajectory_planner/include
-Libs: -L${prefix}/lib -lreset_trajectory_planner_lib
-Requires: roscpp geometry_msgs std_msgs

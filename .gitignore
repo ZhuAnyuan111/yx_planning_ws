@@ -27,3 +27,8 @@ Thumbs.db
 
 # 工具自动生成
 .qoder/
+build/
+devel/
+.qoder/
+.catkin_workspace
+*.tar.gz
