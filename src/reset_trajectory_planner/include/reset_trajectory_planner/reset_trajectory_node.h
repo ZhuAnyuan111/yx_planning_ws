@@ -12,15 +12,15 @@
 ///
 /// 输入话题：
 ///   /joints_angle             (geometry_msgs/Quaternion) x=boom, y=arm, z=bucket（度）
-///   /Swing_topic              (geometry_msgs/Point)      x=swing（度）
-///   /dig_point                (geometry_msgs/Quaternion)
-///                             x=swing目标角（度）
-///                             y=boom 目标角（度）
-///                             z=arm  目标角（度）
-///                             w=bucket目标角（度）
-///   /Sys_SeqAction            (std_msgs/Float64)         data==2.0 触发复位
+///   /heading2swing_topic      (std_msgs/Float32)         data=swing（度）
+///   /GP_dig_joints            (geometry_msgs/Quaternion) 挖掘循环模式目标：
+///                             x=swing,y=boom,z=arm,w=bucket（度）
+///   /clean_digPoint           (geometry_msgs/Quaternion) 搭台模式目标：
+///                             x=swing,y=boom,z=arm,w=bucket（度）
+///   /Sys_SRe_FlagResetExcute  (std_msgs/Float64)         data==1 挖掘循环复位 /
+///                             ==2 搭台复位 / ==0 退出
 ///
-/// 目标姿态由 /dig_point 直接给出（上位机已预计算好四关节角）：
+/// 目标姿态由上位机预计算后经对应模式话题直接给出（四关节角）：
 ///   swing=x, boom=y, arm=z, bucket=w
 ///
 /// 输出话题：
@@ -33,6 +33,7 @@
 #include <geometry_msgs/PointStamped.h>
 #include <geometry_msgs/Pose.h>
 #include <geometry_msgs/Quaternion.h>
+#include <std_msgs/Float32.h>
 #include <std_msgs/Float64.h>
 
 #include <string>
@@ -50,6 +51,13 @@ enum class ResetPhase {
   kFailed  // 异常中止（超时 / 输入失效）
 };
 
+/// 工作模式（决定复位目标来源）
+enum class ResetMode {
+  kNone,      // 未激活
+  kDigCycle,  // 挖掘循环模式：目标源 /GP_dig_joints
+  kBench      // 搭台模式：目标源 /clean_digPoint
+};
+
 class ResetTrajectoryNode {
  public:
   ResetTrajectoryNode(ros::NodeHandle& nh, ros::NodeHandle& pnh);
@@ -61,8 +69,9 @@ class ResetTrajectoryNode {
 
   // ==================== 订阅回调 ====================
   void JointsCallback(const geometry_msgs::Quaternion::ConstPtr& msg);
-  void SwingCallback(const geometry_msgs::Point::ConstPtr& msg);
-  void DigPointCallback(const geometry_msgs::Quaternion::ConstPtr& msg);
+  void SwingCallback(const std_msgs::Float32::ConstPtr& msg);
+  void GPDigJointsCallback(const geometry_msgs::Quaternion::ConstPtr& msg);
+  void CleanDigPointCallback(const geometry_msgs::Quaternion::ConstPtr& msg);
   void ActivateCallback(const std_msgs::Float64::ConstPtr& msg);
   void TruckCenterCallback(const geometry_msgs::Quaternion::ConstPtr& msg);
   void BucketTerrainCallback(const geometry_msgs::PointStamped::ConstPtr& msg);
@@ -82,7 +91,7 @@ class ResetTrajectoryNode {
                               double bucket, bool running);
   void StopExecution();                     // 外部撤销：停止并置结束位
   void AbortExecution(const char* reason);  // 异常中止：保持末指令并置结束位
-  bool CheckInputsValid();                  // 激活前置校验：数据是否曾到达
+  bool CheckInputsValid(bool goal_src_valid, const char* src_topic);  // 激活前置校验：数据是否曾到达
   bool CheckInputsFresh();                  // 执行期校验：数据是否仍在更新
   bool IsPhysicalGoalReached();             // 物理状态提前结束判定
   double UpdateFilteredTraveled();          // 更新并返回抗抖动已行程（有副作用）
@@ -93,9 +102,10 @@ class ResetTrajectoryNode {
 
   // 订阅
   ros::Subscriber sub_joints_;
-  ros::Subscriber sub_swing_;
-  ros::Subscriber sub_dig_point_;    // /dig_point
-  ros::Subscriber sub_activate_;
+  ros::Subscriber sub_swing_;            // /heading2swing_topic
+  ros::Subscriber sub_gp_dig_joints_;    // /GP_dig_joints（挖掘循环模式目标）
+  ros::Subscriber sub_clean_dig_point_;  // /clean_digPoint（搭台模式目标）
+  ros::Subscriber sub_activate_;         // /Sys_SRe_FlagResetExcute
   ros::Subscriber sub_truck_center_;
   ros::Subscriber sub_bucket_terrain_;
   ros::Subscriber sub_real_bkt_pos_;
@@ -149,16 +159,22 @@ class ResetTrajectoryNode {
   bool joints_valid_ = false;
   bool swing_valid_ = false;
 
-  // ---- 挖掘起点输入（/dig_point 直接给出）----
-  double dig_swing_deg_ = 0.0;    // /dig_point.x 挖掘点回转角（度）
-  bool dig_point_valid_ = false;
+  // ---- 挖掘循环模式目标关节角（/GP_dig_joints, 度）----
+  double gp_swing_deg_ = 0.0;
+  double gp_boom_deg_ = 0.0;
+  double gp_arm_deg_ = 0.0;
+  double gp_bucket_deg_ = 0.0;
+  bool gp_goal_valid_ = false;
 
-  // ---- 目标关节角（度，随 /dig_point 话题刷新）----
-  double goal_swing_deg_ = 0.0;
-  double goal_boom_deg_ = 0.0;
-  double goal_arm_deg_ = 0.0;
-  double goal_bucket_deg_ = 0.0;
-  bool goal_valid_ = false;
+  // ---- 搭台模式目标关节角（/clean_digPoint, 度）----
+  double clean_swing_deg_ = 0.0;
+  double clean_boom_deg_ = 0.0;
+  double clean_arm_deg_ = 0.0;
+  double clean_bucket_deg_ = 0.0;
+  bool clean_goal_valid_ = false;
+
+  // ---- 当前工作模式（激活时确定，用于日志与目标源选择）----
+  ResetMode current_mode_ = ResetMode::kNone;
 
   // ---- 目标快照（激活瞬间锁定，执行期一律使用）----
   // 防止挖掘点话题中途刷新导致回转指令跳变而进度基准仍为旧值

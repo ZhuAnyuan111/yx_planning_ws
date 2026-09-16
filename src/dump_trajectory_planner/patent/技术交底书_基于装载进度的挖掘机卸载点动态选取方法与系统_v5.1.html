@@ -72,9 +72,9 @@
 <hr>
 
 <h2>2、检索报告（找出最接近的现有技术，并进行对比分析）</h2>
-<p><strong>检索关键词</strong>：挖掘机 / 装载机 / 铲装机器人 + 自动装车 / 自主卸料 + 卸料点 / 卸载点 / 装载点 + 车厢 / 矿卡 + 点云 / 料位 / 满斗率 + 可达 / 逆运动学；英文：excavator / loading machine + autonomous truck loading + dump point / loading position + truck bed / load distribution + reachability / inverse kinematics</p>
-<p><strong>IPC 分类号</strong>：E02F 3/43；E02F 9/26；G06T 17/00</p>
-<p><strong>检索式</strong>：S1: (E02F3/43/ic or (挖掘机 or 装载机 or 铲装)/ti,ac,ab) and ((卸载点 or 装载点 or 卸料点)/ti,ac,ab) and ((车厢 or 矿卡 or 点云)/ti,ac,ab)；S2: (excavator or loading machine) and (dump point or loading position) and (truck bed or load distribution)</p>
+<p><strong>检索关键词</strong>：挖掘机 / 装载机 / 铲装机器人 + 自动装车 / 自主卸料 + 卸料点 / 卸载点 / 装载点 + 车厢 / 矿卡 + 点云 / 料位 / 满斗率 + 可达 / 逆运动学；英文：excavator / loading machine + autonomous truck loading + dump point / dump location / loading position + truck bed + soil distribution / load distribution + reachability / inverse kinematics</p>
+<p><strong>IPC 分类号</strong>：E02F 3/43（挖掘机作业控制）；E02F 9/26（指示/传感装置）；G06T 17/00（三维点云建模）</p>
+<p><strong>检索式</strong>：S1: (E02F3/43/ic or (挖掘机 or 装载机 or 铲装)/ti,ac,ab) and ((卸载点 or 装载点 or 卸料点)/ti,ac,ab) and ((车厢 or 矿卡 or 点云)/ti,ac,ab)；S2: (excavator or loading machine) and (dump point or dump location or loading position) and (truck bed or soil distribution or load distribution)</p>
 <p><strong>检索记录</strong>：</p>
 <table>
   <colgroup><col style="width:7%"><col style="width:24%"><col style="width:41%"><col style="width:28%"></colgroup>
@@ -90,7 +90,7 @@
     <tr><td class="c">8</td><td>CN116088365A</td><td>一种基于视觉的自主挖掘作业卸料点定位系统及方法</td><td>一般</td></tr>
     <tr><td class="c">9</td><td>CN113309169A</td><td>一种无人驾驶装载机室内自主卸料系统及方法</td><td>一般</td></tr>
     <tr><td class="c">10</td><td>CN113985873A</td><td>一种装载机自主铲掘作业铲掘点规划方法</td><td>一般</td></tr>
-    <tr><td class="c">11</td><td>US6247538B1 / EP3733981B1 / US12686991</td><td>单个装载位置确定类</td><td>一般</td></tr>
+    <tr><td class="c">11</td><td>US6247538B1 / EP3733981B1 / US12686991</td><td>单个装载位置确定类（目标装载位置/装载位置指定单元）</td><td>一般</td></tr>
     <tr><td class="c">12</td><td>NPL：A Robotic Excavator for Autonomous Truck Loading（CMU）</td><td>与 US6363632B1 同源论文</td><td>高</td></tr>
   </tbody>
 </table>
@@ -123,7 +123,8 @@
 
 <h2>4、发明内容（针对技术问题提出的技术方案）</h2>
 <p><strong>待解决问题</strong>：1）停偏时保证卸载点<strong>运动学可达</strong>；2）给出<strong>稳定不抖动的点级判满</strong>；3）<strong>单一感知源误判</strong>时维持连续与安全；4）布料<strong>由远及近闭环</strong>；5）选点<strong>直接驱动轨迹</strong>、异常仍有可执行目标。</p>
-<p><strong>总体方案</strong>："<strong>可达域 ∩ 未满域</strong>驱动动态选点、以<strong>斗数双向保底</strong>兜底"。卸载点 = 候选点中同时满足 ①IK <strong>可达</strong>、②点云双门限判<strong>未满</strong>、③布料顺序（<strong>自远及近遍历</strong>）当前轮到的点；任何情形受<strong>斗数双向保底</strong>约束。可达域（几何）、料面（感知）、斗数（计数）三源独立、交叉校验。</p>
+<p><strong>总体方案</strong>："<strong>可达域 ∩ 未满域</strong>驱动动态选点、以<strong>斗数双向保底</strong>兜底"。卸载点 = 候选点中同时满足 ①IK <strong>可达</strong>、②点云双门限判<strong>未满</strong>、③布料顺序（<strong>自远及近遍历</strong>）当前轮到的点；任何情形受<strong>斗数双向保底</strong>约束。可达域（几何/运动学）、料面状态（感知）、装载斗数（计数）三源独立、交叉校验，任一异常由其余兜底。</p>
+<p><strong>处理链</strong>：候选点生成 → 逐点 IK 可达性筛选定可达域边界 → 矿卡可达性两级判定 → 点云双门限判满（或降级 load_num 三段式）→ 自远及近遍历取首个未满点 → 斗数双向保底 → 调度执行与回转圆入厢衔接点输出。</p>
 
 <h3>4.1 多机制联动关系（创造性主线 · 回应评审建议2）</h3>
 <p>评审指出"仅按装载进度动态调整卸载点"与 CN109902857B/CN114164877B 重合、作为唯一核心创新点偏弱。本发明创造性<strong>不落在"按进度选点"上位思想</strong>，而落在<strong>三源因果闭环 + 计数对感知反向否决</strong>：</p>
@@ -174,11 +175,12 @@
 优选改进（<code>unloadP.m</code> V2.0，远密近疏）：t_raw=(i-1)/(N-1),　t = 1 - (1 - t_raw)^k, k=2.5<br>
 　p_i = p_near + t·(p_far - p_near)　（z 取 p_near_z）
 </div>
-<p><strong>动机</strong>：布料由远及近，远端最先触及可达域边界，加密远端提高 <code>idx_far</code> 判定精度。等距与远密近疏均落入权利要求①。</p>
+<p><strong>动机</strong>：布料由远及近，远端最先使用且最先触及可达域边界，加密远端可提高 <code>idx_far</code> 判定精度。等距与远密近疏均落入权利要求①。</p>
 
 <h3>5.2 步骤 2：逐点 IK 可解性筛选，定可达域边界</h3>
+<p>对每个 p_i=(x,y,z) 求关节角 q=[swing, boom, arm, bucket]。</p>
 <div class="formula">
-主解（给定姿态角 α）：swing = mod(atan2d(y,x)+180, 360)；x_1=(x-b_x·cos·)/cos·（含 swing=±90° 特例）, z_1=z-b_z<br>
+主解（给定姿态角 α）：swing = mod(atan2d(y,x)+180, 360)；平面内 x_1=(x - b_x·cos·swing)/cos·swing（含 swing=±90° 特例）, z_1=z-b_z<br>
 　x_3=x_1-L_k'·cosα, z_3=z_1-L_k'·sinα（L_k'=L_k·bucket_bias）；l_5=√(x_1²+z_1²), l_6=√(x_3²+z_3²)<br>
 　cosβ=(l_5²+l_6²-L_k'²)/(2 l_5 l_6),　cosα_=(L_b²+l_6²-L_a²)/(2 L_b l_6)<br>
 　boom=atan2d(z_1,x_1)+acosd(cosβ)+acosd(cosα_)；arm=acosd((L_b²+L_a²-l_6²)/(2 L_b L_a))-180；bucket=α-boom-arm<br>
@@ -206,7 +208,7 @@
   <tbody>
     <tr><td>前置</td><td>num_feasible == 0</td><td>TruckFeasible=0，error 返回，请求重新停靠</td></tr>
     <tr><td>L1</td><td>idx_far &gt; θ</td><td>TruckFeasible=1（可达）</td></tr>
-    <tr><td>L2</td><td>1 ≤ idx_far ≤ θ 且 SoilFullInPoint(round(θ))==1</td><td>TruckFeasible=1（远端不可达但阈值位已装满，豁免）</td></tr>
+    <tr><td>L2</td><td>1 ≤ idx_far ≤ θ 且 SoilFullInPoint(round(θ))==1</td><td>TruckFeasible=1（远端不可达但阈值位已装满，无需再卸远端，豁免）</td></tr>
     <tr><td>否则</td><td>—</td><td>TruckFeasible=0，终止本卡（error2），请求重新停靠</td></tr>
   </tbody>
 </table>
@@ -271,10 +273,11 @@
 
 <h3>5.7 步骤 7：调度执行与回转圆入厢衔接点</h3>
 <div class="formula">
-调度状态机（multi_unload_scheduler.m）：loadingFlag 触发→选点→由远及近逐点执行；dump_done_flag 触发复位、reset_done_flag 触发下一次卸载<br>
+调度状态机（multi_unload_scheduler.m）：loadingFlag 触发→选点→由远及近逐点执行；dump_done_flag 触发复位、reset_done_flag 触发下一次卸载；sched_state：0 空闲 / 1 已选点 / 2 执行中 / 3 完成<br>
 入厢衔接（calc_entry_point_circle_strategy）：dig_end=FK(start_joint) 齿尖 XY；R1=‖dig_end‖, R2=‖unloadPoint_xy‖<br>
 　R = R_coff·R1 + (1−R_coff)·R2（R_coff=0.5）；R&lt;1e−6 → flag=0 退化，入厢点=unloadPoint_xy<br>
-　圆∩车厢矩形（局部系 L×W）四边：有交点→沿 rot_dir 取与 dig_end swing 角差最小交点（flag=1）；无交点→最近边投影点（flag=2）
+　圆∩车厢矩形（局部系 L×W）四边：有交点→沿 rot_dir 取与 dig_end swing 角差最小交点（flag=1）；无交点→最近边投影点（flag=2）<br>
+　rot_dir 由 dig_end→unload 最短弧自动判定
 </div>
 
 <h3>5.8 异常处理流程与错误码（表 F · 真实代码）</h3>
@@ -303,10 +306,10 @@
 <hr>
 
 <h2>6、本发明的优点（含量化效果）</h2>
-<p>1）<strong>选出即必然可达</strong>：卸载点必取自 F（IK 可解+限位余量 δ），构造性保证；停偏时在缩小后可达域内选点。<br>
+<p>1）<strong>选出即必然可达</strong>：卸载点必取自 F（IK 可解+限位余量 δ），构造性保证；停偏时在缩小后可达域内选点，偏差超范围经两级判定及时止损。<br>
 2）<strong>布料与实际料面闭环</strong>：双门限判满直接驱动下一点，先堆高区自动跳过，避免堆高/撒料/越料。<br>
 3）<strong>双重门限拦截两类误判</strong>：门限1 防稀疏、门限2（均值）防尖峰，方向相反；跨轮继承防翻转。<br>
-4）<strong>感知与计数互为冗余</strong>：下限保底防误停、上限保底防超载；点云不可用降级三段式。<br>
+4）<strong>感知与计数互为冗余</strong>：下限保底防误停、上限保底防超载；点云不可用降级三段式，单传感器失效不中断作业。<br>
 5）<strong>永不无解 + 选点与轨迹一体化衔接</strong>：异常路径输出中位可达点；同时输出入厢衔接点，无缝对接下游轨迹。</p>
 
 <h3>6.1 量化效果</h3>
@@ -346,7 +349,7 @@
 <strong>③</strong> 双重门限判满：以沿车头偏移的预设圆域内点云判定——点数<strong>大于</strong>门限时算局部平均高度，不大于 z_plane+Δh_full 判未满、否则已满；点数<strong>不大于</strong>门限时判未满（三要素完整）；<br>
 <strong>④</strong> 由远及近遍历：自 idx_far 向 idx_near 遍历，取首个未满可达点为当前卸载点并输出关节角；<br>
 <strong>⑤</strong> 斗数双向保底（第一区别特征锚点）：<code>LoadNums&gt;MaxLoadNum</code> 强制结束并取中位点执行最后一斗；全部判满但 <code>LoadNums≤MinLoadNum</code> 时<strong>不采信已满判定</strong>、取中位点继续。</p>
-<p><strong>从属保护点（退路）</strong>：⑥满载跨轮继承；⑦检测圆域限定（车头偏移+半径+算术均值）；⑧分布函数式与 N/k 优选值；⑨IK 双重筛选（α 主解+β_k 保底+δ 余量）；⑩矿卡可达两级判定（idx_far vs 0.5N + 阈值位装满豁免）；⑪遍历毕全满且斗数大于下限时判整车装满；⑫降级 load_num 三段式；⑬中位点全兜底；⑭多点多次调度状态机；⑮回转圆入厢衔接点；⑯系统权利要求（七模块）与计算机可读存储介质；⑰<strong>执行层异常处理链</strong>（段确认帧/超时推进/高度门控重试/clamp 中止/错误码 1-2-3）作为系统从属。</p>
+<p><strong>从属保护点（退路）</strong>：⑥满载跨轮继承；⑦检测圆域限定（车头偏移+半径+算术均值）；⑧分布函数式与 N/k 优选值；⑨IK 双重筛选（α 主解+β_k 保底+δ 余量）；⑩矿卡可达两级判定（idx_far vs 0.5N + 阈值位装满豁免）；⑪遍历毕全满且斗数大于下限时判整车装满；⑫降级 load_num 三段式；⑬中位点全兜底；⑭多点多次调度状态机；⑮回转圆入厢衔接点（R 加权+矩形求交+角差最小）；⑯系统权利要求（七模块）与计算机可读存储介质；⑰<strong>执行层异常处理链</strong>（段确认帧/超时推进/高度门控重试/clamp 中止/错误码 1-2-3）作为系统从属。</p>
 <div class="note"><strong>布局说明</strong>：③④⑤为核心区别且<strong>互为因果</strong>（判满→遍历方向→保底校验），以 4.1 <strong>三源联动/反向否决</strong>为创造性主线；<strong>⑤最强最干净</strong>，置于论证最前；②措辞收紧为"以逆解可解性筛选候选点并确定可达域边界"。<strong>不保护</strong>"感知料面→选卸载点"上位思想（已被 CN109902857B/US6363632B1 公开）。</div>
 
 <hr>

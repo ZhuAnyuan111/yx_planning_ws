@@ -39,7 +39,7 @@ reset_trajectory_planner/
 ### 总体流程
 
 ```
-收到 /Sys_SeqAction (data==2.0)
+收到 /Sys_SRe_FlagResetExcute (data==1 挖掘循环 / ==2 搭台)
               │
               ▼
     计算方向性总回转行程（处理 360° 回绕）
@@ -129,7 +129,14 @@ truck_center_swingAngle = rad2deg(atan2(y, x)) + 180
 
 ## 目标姿态输入
 
-目标姿态由上位机预计算后，通过 `/dig_point`（`geometry_msgs/Quaternion`）直接下发：
+目标姿态由上位机预计算后，按**工作模式**通过不同话题（均为 `geometry_msgs/Quaternion`）下发：
+
+| 工作模式 | 目标话题 | 触发值 |
+|----------|----------|--------|
+| 挖掘循环模式 | `/GP_dig_joints` | `/Sys_SRe_FlagResetExcute` data==1 |
+| 搭台模式 | `/clean_digPoint` | `/Sys_SRe_FlagResetExcute` data==2 |
+
+两话题字段定义一致：
 
 | 字段 | 含义 |
 |------|------|
@@ -138,10 +145,10 @@ truck_center_swingAngle = rad2deg(atan2(y, x)) + 180
 | `z` | arm   目标角（度） |
 | `w` | bucket目标角（度） |
 
-**触发时机：** `/dig_point` 到达即更新目标；执行期间目标由激活瞬间的快照锁定，
-中途刷新不影响正在执行的轨迹。
+**触发时机：** 对应模式话题到达即更新该模式目标缓存；激活瞬间按当前模式锁定快照，
+执行期间目标话题刷新不影响正在执行的轨迹。
 
-**失败会怎样：** 若从未收到 `/dig_point`，激活时前置校验不通过，节点不启动执行。
+**失败会怎样：** 若激活模式对应的目标话题从未收到，前置校验不通过，节点不启动执行。
 
 ---
 
@@ -152,9 +159,10 @@ truck_center_swingAngle = rad2deg(atan2(y, x)) + 180
 | 话题名 | 消息类型 | 说明 |
 |--------|----------|------|
 | `/joints_angle` | `geometry_msgs/Quaternion` | 实时关节角：x=boom, y=arm, z=bucket（度） |
-| `/Swing_topic` | `geometry_msgs/Point` | 实时回转角：x=swing（度） |
-| `/dig_point` | `geometry_msgs/Quaternion` | 目标姿态：x=swing, y=boom, z=arm, w=bucket（度） |
-| `/Sys_SeqAction` | `std_msgs/Float64` | 激活信号：`data==2.0` 触发复位；其他值触发停止 |
+| `/heading2swing_topic` | `std_msgs/Float32` | 实时回转角：data=swing（度） |
+| `/GP_dig_joints` | `geometry_msgs/Quaternion` | 挖掘循环模式目标：x=swing, y=boom, z=arm, w=bucket（度） |
+| `/clean_digPoint` | `geometry_msgs/Quaternion` | 搭台模式目标：x=swing, y=boom, z=arm, w=bucket（度） |
+| `/Sys_SRe_FlagResetExcute` | `std_msgs/Float64` | 激活信号：`data==1` 挖掘循环复位 / `data==2` 搭台复位 / `data==0` 退出 |
 | `/truck_center_point` | `geometry_msgs/Quaternion` | 卡车中心位置：x/y/z=坐标（用于计算 truck_safe） |
 | `/bucket_terrain_delta_position` | `geometry_msgs/PointStamped` | `.z = bucket_height_gd` |
 | `/RealBktPosXYZ` | `geometry_msgs/Point` | `.z =` 齿尖离地高度 |
@@ -244,15 +252,14 @@ roslaunch reset_trajectory_planner reset_trajectory.launch
 # 终端2：模拟实时关节角
 rostopic pub -r 10 /joints_angle geometry_msgs/Quaternion \
   '{x: 30.0, y: -45.0, z: 10.0, w: 0.0}'
-rostopic pub -r 10 /Swing_topic geometry_msgs/Point \
-  '{x: 60.0, y: 0.0, z: 0.0}'
+rostopic pub -r 10 /heading2swing_topic std_msgs/Float32 "data: 60.0"
 
-# 终端3：发布目标姿态（swing/boom/arm/bucket 目标角）
-rostopic pub -r 2 /dig_point geometry_msgs/Quaternion \
+# 终端3：发布目标姿态（挖掘循环模式用 /GP_dig_joints，搭台模式用 /clean_digPoint）
+rostopic pub -r 2 /GP_dig_joints geometry_msgs/Quaternion \
   '{x: 0.0, y: 30.0, z: -45.0, w: 0.0}'
 
-# 终端4：触发复位（data==2.0）
-rostopic pub /Sys_SeqAction std_msgs/Float64 "data: 2.0"
+# 终端4：触发复位（data==1 挖掘循环 / data==2 搭台 / data==0 退出）
+rostopic pub /Sys_SRe_FlagResetExcute std_msgs/Float64 "data: 1.0"
 
 # 观察输出
 rostopic echo /RefDeviceTraj_Reset
@@ -272,9 +279,9 @@ rostopic echo /RefDeviceTraj_Reset
 | 阶段2 回转卡死 | 全局超时 `total_timeout_sec` 统一保底中止 |
 | 执行中反馈话题断流 | 静默超 `input_timeout_sec` 立即中止，避免基于陈旧反馈下发指令 |
 | 执行中挖掘点话题刷新 | 不影响执行——目标在激活瞬间已快照锁定 |
-| `/dig_point` 从未到达 | 前置校验不通过，激活时拒绝启动 |
-| 执行中 Sys_SeqAction 变为非 2 | 立即停止，保持末次指令并发 Position.x=0 |
-| 已在执行中重复收到 data==2 | 忽略，避免定时器状态混乱 |
+| 激活模式对应目标话题从未到达 | 前置校验不通过，激活时拒绝启动 |
+| 执行中 FlagResetExcute 变为 0 | 立即停止，保持末次指令并发 Position.x=0 |
+| 已在执行中重复收到 data==1/2 | 忽略，避免定时器状态混乱 |
 | 输入数据缺失 | 前置校验不通过，不启动 |
 
 ---
@@ -351,7 +358,7 @@ DetermineDirection(start, goal)         // 自动选最短路径方向
 ## 系统集成
 
 ```
-系统决策节点 ─── /Sys_SeqAction (data==2.0) ──► reset_trajectory_node
+系统决策节点 ─── /Sys_SRe_FlagResetExcute (data==1/2) ──► reset_trajectory_node
                                                         │
               ◄── /RefDeviceTraj_Reset ─────────────────┘
               (Position.x=1 执行中, Position.x=0 结束)

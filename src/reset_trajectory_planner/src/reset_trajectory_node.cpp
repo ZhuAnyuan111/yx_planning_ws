@@ -10,8 +10,10 @@
 namespace reset_trajectory_planner {
 
 namespace {
-constexpr double kPublishRate = 10.0;  // 10Hz 逐帧发布
-constexpr double kActivateValue = 2.0; // /Sys_SeqAction 激活值
+constexpr double kPublishRate = 10.0;    // 10Hz 逐帧发布
+constexpr double kModeExit = 0.0;        // /Sys_SRe_FlagResetExcute: 退出
+constexpr double kModeDigCycle = 1.0;    // 挖掘循环模式（目标源 /GP_dig_joints）
+constexpr double kModeBench = 2.0;       // 搭台模式（目标源 /clean_digPoint）
 }  // namespace
 
 // ==================== 构造函数 ====================
@@ -49,12 +51,15 @@ void ResetTrajectoryNode::LoadParams() {
 void ResetTrajectoryNode::SetupTopics() {
   sub_joints_ = nh_.subscribe("/joints_angle", 1,
                               &ResetTrajectoryNode::JointsCallback, this);
-  sub_swing_ = nh_.subscribe("/Swing_topic", 1,
+  sub_swing_ = nh_.subscribe("/heading2swing_topic", 1,
                              &ResetTrajectoryNode::SwingCallback, this);
-  sub_dig_point_ = nh_.subscribe(
-      "/dig_point", 1,
-      &ResetTrajectoryNode::DigPointCallback, this);
-  sub_activate_ = nh_.subscribe("/Sys_SeqAction", 1,
+  sub_gp_dig_joints_ = nh_.subscribe(
+      "/GP_dig_joints", 1,
+      &ResetTrajectoryNode::GPDigJointsCallback, this);
+  sub_clean_dig_point_ = nh_.subscribe(
+      "/clean_digPoint", 1,
+      &ResetTrajectoryNode::CleanDigPointCallback, this);
+  sub_activate_ = nh_.subscribe("/Sys_SRe_FlagResetExcute", 1,
                                 &ResetTrajectoryNode::ActivateCallback, this);
   sub_truck_center_ = nh_.subscribe(
       "/truck_center_point", 1,
@@ -87,41 +92,59 @@ void ResetTrajectoryNode::JointsCallback(
 }
 
 void ResetTrajectoryNode::SwingCallback(
-    const geometry_msgs::Point::ConstPtr& msg) {
-  swing_deg_ = msg->x;
+    const std_msgs::Float32::ConstPtr& msg) {
+  swing_deg_ = msg->data;
   const bool first_frame = !swing_valid_;
   swing_valid_ = true;
   last_swing_time_ = ros::Time::now();
   if (first_frame) {
-    ROS_INFO("[reset_traj] first /Swing_topic: swing=%.2f deg", swing_deg_);
+    ROS_INFO("[reset_traj] first /heading2swing_topic: swing=%.2f deg", swing_deg_);
   }
 }
 
-/// /dig_point: 上位机已预计算好的四关节目标角（度）
-///   x = swing 目标角
-///   y = boom  目标角
-///   z = arm   目标角
-///   w = bucket目标角
-void ResetTrajectoryNode::DigPointCallback(
+/// /GP_dig_joints: 挖掘循环模式目标四关节角（度）
+///   x=swing, y=boom, z=arm, w=bucket
+void ResetTrajectoryNode::GPDigJointsCallback(
     const geometry_msgs::Quaternion::ConstPtr& msg) {
-  const bool first_frame = !dig_point_valid_;
-  dig_swing_deg_ = msg->x;
-  goal_swing_deg_ = msg->x;
-  goal_boom_deg_ = msg->y;
-  goal_arm_deg_ = msg->z;
-  goal_bucket_deg_ = msg->w;
-  goal_valid_ = true;
-  dig_point_valid_ = true;
+  const bool first_frame = !gp_goal_valid_;
+  gp_swing_deg_ = msg->x;
+  gp_boom_deg_ = msg->y;
+  gp_arm_deg_ = msg->z;
+  gp_bucket_deg_ = msg->w;
+  gp_goal_valid_ = true;
 
   if (first_frame) {
-    ROS_INFO("[reset_traj] first /dig_point: swing=%.2f boom=%.2f arm=%.2f "
+    ROS_INFO("[reset_traj] first /GP_dig_joints: swing=%.2f boom=%.2f arm=%.2f "
              "bucket=%.2f deg",
-             goal_swing_deg_, goal_boom_deg_, goal_arm_deg_, goal_bucket_deg_);
+             gp_swing_deg_, gp_boom_deg_, gp_arm_deg_, gp_bucket_deg_);
   } else if (enable_debug_log_) {
     ROS_INFO_THROTTLE(1.0,
-        "[reset_traj][dbg] /dig_point: swing=%.2f boom=%.2f arm=%.2f "
+        "[reset_traj][dbg] /GP_dig_joints: swing=%.2f boom=%.2f arm=%.2f "
         "bucket=%.2f deg",
-        goal_swing_deg_, goal_boom_deg_, goal_arm_deg_, goal_bucket_deg_);
+        gp_swing_deg_, gp_boom_deg_, gp_arm_deg_, gp_bucket_deg_);
+  }
+}
+
+/// /clean_digPoint: 搭台模式目标四关节角（度）
+///   x=swing, y=boom, z=arm, w=bucket
+void ResetTrajectoryNode::CleanDigPointCallback(
+    const geometry_msgs::Quaternion::ConstPtr& msg) {
+  const bool first_frame = !clean_goal_valid_;
+  clean_swing_deg_ = msg->x;
+  clean_boom_deg_ = msg->y;
+  clean_arm_deg_ = msg->z;
+  clean_bucket_deg_ = msg->w;
+  clean_goal_valid_ = true;
+
+  if (first_frame) {
+    ROS_INFO("[reset_traj] first /clean_digPoint: swing=%.2f boom=%.2f arm=%.2f "
+             "bucket=%.2f deg",
+             clean_swing_deg_, clean_boom_deg_, clean_arm_deg_, clean_bucket_deg_);
+  } else if (enable_debug_log_) {
+    ROS_INFO_THROTTLE(1.0,
+        "[reset_traj][dbg] /clean_digPoint: swing=%.2f boom=%.2f arm=%.2f "
+        "bucket=%.2f deg",
+        clean_swing_deg_, clean_boom_deg_, clean_arm_deg_, clean_bucket_deg_);
   }
 }
 
@@ -151,10 +174,14 @@ void ResetTrajectoryNode::RealBktPosCallback(
   real_bkt_pos_valid_ = true;
 }
 
+/// /Sys_SRe_FlagResetExcute (std_msgs/Float64):
+///   data==1.0 → 挖掘循环模式复位（目标源 /GP_dig_joints）
+///   data==2.0 → 搭台模式复位（目标源 /clean_digPoint）
+///   data==0.0 → 退出（若正在执行则停止）
 void ResetTrajectoryNode::ActivateCallback(
     const std_msgs::Float64::ConstPtr& msg) {
-  if (msg->data != kActivateValue) {
-    // 非复位激活信号，若正在执行则停止
+  // 退出信号：若正在执行则停止
+  if (msg->data == kModeExit) {
     if (phase_ != ResetPhase::kIdle && phase_ != ResetPhase::kDone) {
       StopExecution();
     }
@@ -164,19 +191,48 @@ void ResetTrajectoryNode::ActivateCallback(
   // 已在执行中，忽略重复触发
   if (phase_ == ResetPhase::kSwing || phase_ == ResetPhase::kArm) return;
 
-  ROS_INFO("[reset_traj] activation received (Sys_SeqAction=2)");
+  // 判定工作模式与对应目标源
+  ResetMode mode;
+  const char* mode_name;
+  if (msg->data == kModeDigCycle) {
+    mode = ResetMode::kDigCycle;
+    mode_name = "dig-cycle";
+  } else if (msg->data == kModeBench) {
+    mode = ResetMode::kBench;
+    mode_name = "bench";
+  } else {
+    ROS_WARN_THROTTLE(2.0,
+        "[reset_traj] unknown FlagResetExcute=%.1f, ignored", msg->data);
+    return;
+  }
+  current_mode_ = mode;
 
-  if (!CheckInputsValid()) return;
+  ROS_INFO("[reset_traj] activation received (FlagResetExcute=%.1f, mode=%s)",
+           msg->data, mode_name);
+
+  // 前置校验：实时反馈 + 当前模式目标源是否已到达
+  const bool goal_src_valid =
+      (mode == ResetMode::kDigCycle) ? gp_goal_valid_ : clean_goal_valid_;
+  const char* src_topic =
+      (mode == ResetMode::kDigCycle) ? "/GP_dig_joints" : "/clean_digPoint";
+  if (!CheckInputsValid(goal_src_valid, src_topic)) return;
 
   // 记录全局执行起始时刻
   execution_start_time_ = ros::Time::now();
 
-  // 锁定目标快照：执行期间一律使用快照值，避免挖掘点话题中途刷新
+  // 按模式锁定目标快照：执行期间一律使用快照值，避免目标话题中途刷新
   // 导致回转指令跳变而进度基准（起始角/方向/总行程）仍为旧值
-  exec_goal_swing_deg_ = goal_swing_deg_;
-  exec_goal_boom_deg_ = goal_boom_deg_;
-  exec_goal_arm_deg_ = goal_arm_deg_;
-  exec_goal_bucket_deg_ = goal_bucket_deg_;
+  if (mode == ResetMode::kDigCycle) {
+    exec_goal_swing_deg_ = gp_swing_deg_;
+    exec_goal_boom_deg_ = gp_boom_deg_;
+    exec_goal_arm_deg_ = gp_arm_deg_;
+    exec_goal_bucket_deg_ = gp_bucket_deg_;
+  } else {
+    exec_goal_swing_deg_ = clean_swing_deg_;
+    exec_goal_boom_deg_ = clean_boom_deg_;
+    exec_goal_arm_deg_ = clean_arm_deg_;
+    exec_goal_bucket_deg_ = clean_bucket_deg_;
+  }
 
   // 记录起始回转角，判断方向和总行程（使用方向性角度差处理 360° 回绕）
   swing_start_deg_ = swing_deg_;
@@ -417,13 +473,14 @@ void ResetTrajectoryNode::AbortExecution(const char* reason) {
   phase_ = ResetPhase::kFailed;
 }
 
-bool ResetTrajectoryNode::CheckInputsValid() {
+bool ResetTrajectoryNode::CheckInputsValid(bool goal_src_valid,
+                                           const char* src_topic) {
   if (!joints_valid_ || !swing_valid_) {
-    ROS_WARN("[reset_traj] joints data not received, abort");
+    ROS_WARN("[reset_traj] joints/swing feedback not received, abort");
     return false;
   }
-  if (!goal_valid_) {
-    ROS_WARN("[reset_traj] /dig_point not received yet, abort");
+  if (!goal_src_valid) {
+    ROS_WARN("[reset_traj] %s not received yet, abort", src_topic);
     return false;
   }
   return true;
