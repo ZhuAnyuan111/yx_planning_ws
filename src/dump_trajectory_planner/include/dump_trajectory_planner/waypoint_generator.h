@@ -1,16 +1,15 @@
 #pragma once
 
 /// @file waypoint_generator.h
-/// @brief 卸载轨迹关键航路点生成器（关节空间，照 MATLAB 方案）。
+/// @brief 卸载轨迹关键航路点生成器（关节空间，简化 4 航路点版）。
 ///
-/// 6 关键航路点（关节角，rad）：
+/// 4 关键航路点（关节角，rad）：
 ///   WP1 —— 挖掘终止点（起点，姿态角修正 bucket）
-///   WP2 —— 动臂提升点（swing/arm/bucket 保持，仅 boom 提升；提升幅度由 swing 差插值决定）
-///   WP3 —— 中间过渡点（swing 走一半或最小步长；boom/arm 按系数混合）
-///   WP4 —— 厢上过渡点（xy 由 ComputeMiddleUpXY 决定，铰接点高度=truck_top+bias，铲斗长=0 IK 求解）
-///   WP5 —— 除铲斗到位（swing 到位，boom/arm 按 P5 系数混合到 unload；铲斗未翻）
+///   WP4 —— 厢上过渡点（xy 由 ComputeMiddleUpXY 决定，铰接点高度=truck_top+bias，IK 求解）
+///   WP5 —— 卸载过渡点（swing 到位，boom/arm 按 P5 系数混合到 unload）
 ///   WP6 —— 终点（unload_joint 完整）
 ///
+/// WP1→WP4 由节点端的两阶段策略驱动（boom 阶跃 + PCHIP），无需中间航路点。
 /// 段时间 t_array（绝对时刻，t1=0）：由各段主导关节速度决定，见 .cpp 实现。
 
 #include <string>
@@ -94,11 +93,11 @@ struct WaypointParams {
 struct DumpWaypointResult {
   bool success = false;
   std::string message;
-  std::vector<kinematics::JointState> waypoints;  // WP1..WP6（rad）
-  std::vector<double> t_array;                    // 绝对时刻 t1..t6（秒），t1=0
+  std::vector<kinematics::JointState> waypoints;  // WP1,WP4,WP5,WP6（rad）
+  std::vector<double> t_array;                    // 绝对时刻 t1..t4（秒），t1=0
 };
 
-/// 生成 6 关键航路点及段时间
+/// 生成 4 关键航路点及段时间
 /// @param start_joint  挖掘终止时的实时关节角（rad）
 /// @param unload_joint 卸载点关节角（rad），来自 CheckReachable
 /// @param unload_point 卸载点笛卡尔（base 系，m）
@@ -129,10 +128,5 @@ void ComputeMiddleUpXY(const Point3& unload_point,
                        const WaypointParams& params,
                        double& out_x,
                        double& out_y);
-
-/// 计算 WP2→WP3 段回转速度（deg/s）：回转幅度 |swing3-swing2| 越小 → 速度越慢
-/// （小回转慢速起步，抑制满载起步激励回转台欠阻尼振荡）。
-/// 供生成器 t3_dur 与在线 seg1 段时间共用，保证两处速度基准一致。
-double Wp3SwingVelDps(const WaypointParams& params, double swing_diff_deg);
 
 }  // namespace dump_trajectory_planner

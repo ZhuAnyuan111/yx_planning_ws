@@ -1,0 +1,286 @@
+<?xml version="1.0" ?>
+<robot name="SY870">
+    <!-- link -->
+    <link name="base_link">
+        <visual>
+            <origin xyz="0.0 0.0 -1.45" rpy="0.0 0.0 0.0"/>
+            <geometry>
+                <mesh filename="package://exca200_simulink/meshes/SY870-Chassis.dae" />
+            </geometry>
+        </visual>
+    </link>
+
+    <link name="platform">
+        <visual>
+            <origin xyz="0.0 0.0 -1.45" rpy="0.0 0.0 0.0"/>
+            <geometry>
+                <mesh filename="package://exca200_simulink/meshes/SY870-Platform.dae" />
+            </geometry>
+        </visual>
+    </link>
+
+    <link name="boom">
+        <visual>
+            <origin xyz="-0.18 0.0 -2.498" rpy="0.0 0.0 0.0"/>
+            <geometry>
+                <mesh filename="package://exca200_simulink/meshes/SY870-Boom.dae" />
+            </geometry>
+        </visual>
+        <collision>
+            <origin xyz="4.0 0.0 0.5" rpy="0.0 0.0 0.0"/>
+            <geometry>
+                <box size="6 1.5 2"/>
+            </geometry>
+        </collision>
+    </link>
+
+    <link name="arm">
+        <visual>
+            <origin xyz="-7.18 0.0 -2.498" rpy="0.0 0.0 0.0"/>
+            <geometry>
+                <mesh filename="package://exca200_simulink/meshes/SY870-Arm.dae" />
+            </geometry>
+        </visual>
+        <collision>
+            <origin xyz="0.5 0.0 0.2" rpy="0.0 1.85 0.0"/>
+            <geometry>
+                <box size="1.5 1.5 5.0"/>
+            </geometry>
+        </collision>
+    </link>
+
+    <link name="bucket">
+        <visual>
+            <origin xyz="-9.78 0.0 -2.498" rpy="0.0 0.0 0.0"/>
+            <geometry>
+                <mesh filename="package://exca200_simulink/meshes/SY870-Bucket.dae" />
+            </geometry>
+        </visual>
+        <collision>
+            <origin xyz="0.9 0.0 1.0" rpy="0.0 0.0 0.0"/>
+            <geometry>
+                <box size="3.0 3.0 2.0"/>
+            </geometry>
+        </collision>
+    </link>
+    
+    <link name="bucket_tip">
+    </link>
+    
+    <link name="anchor">
+    </link>
+
+
+<!-- joint -->
+    <joint name="swing_joint" type="continuous">
+    <!-- <joint name="swing" type="fixed"> -->
+        <origin xyz="0.0 0.0 0.0" rpy="0.0 0.0 0.0"/>
+        <parent link="base_link"/>
+        <child link="platform"/>
+        <axis xyz="0.0 0.0 1.0"/>
+        <limit lower="0.0" upper="0.0" effort="0.0" velocity="0.0"/>
+    </joint>
+
+    <joint name="anchor" type="fixed">
+        <origin xyz="0.18 0.0 1.048" rpy="0.0 0.0 0.0"/>
+        <parent link="platform"/>
+        <child link="anchor"/>
+        <axis xyz="0.0 0.0 1.0"/>
+        <limit lower="0.0" upper="0.0" effort="0.0" velocity="0.0"/>
+    </joint>
+
+    <joint name="boom_joint" type="revolute">
+        <origin xyz="0.0 0.0 0.0" rpy="0.0 0.0 0.0"/>
+        <parent link="anchor"/>
+        <child link="boom"/>
+        <axis xyz="0.0 -1.0 0.0"/>
+        <limit lower="-0.7930769" upper="0.9648172" effort="1000.0" velocity="1000.0"/>
+    </joint>
+
+    <joint name="arm_joint" type="revolute">
+        <origin xyz="7.0 0.0 0.0" rpy="0.0 0.0 0.0"/>
+        <parent link="boom"/>
+        <child link="arm"/>
+        <axis xyz="0.0 -1.0 0.0"/>
+        <limit lower="-2.420595" upper="-0.65188" effort="1000.0" velocity="1000.0"/>
+    </joint>
+
+    <joint name="bucket_joint" type="revolute">
+        <origin xyz="2.6 0.0 0.0" rpy="0.0 0.0 0.0"/>
+        <parent link="arm"/>
+        <child link="bucket"/>
+        <axis xyz="0.0 -1.0 0.0"/>
+        <limit lower="-2.32966" upper="0.5328486" effort="1000.0" velocity="1000.0"/>
+    </joint>
+
+    <joint name="bucket_to_bucket_tip" type="fixed">
+        <parent link="bucket" />
+        <child link="bucket_tip" />
+        <origin xyz="2.088 0 0" />
+    </joint>
+
+
+    <link name="base_link2">
+        <visual>
+            <origin xyz="0.0 0.0 -1.45" rpy="0.0 0.0 0.0"/>
+            <geometry>
+                <mesh filename="package://exca200_simulink/meshes/SY870-Chassis.dae" />
+            </geometry>
+        </visual>
+    </link>
+
+    <link name="platform2">
+        <visual>
+            <origin xyz="0.0 0.0 -1.45" rpy="0.0 0.0 0.0"/>
+            <geometry>
+                <mesh filename="package://exca200_simulink/meshes/SY870-Platform.dae" />
+            </geometry>
+        </visual>
+    </link>
+
+    <link name="boom2">
+        <visual>
+            <origin xyz="-0.18 0.0 -2.498" rpy="0.0 0.0 0.0"/>
+            <geometry>
+                <mesh filename="package://exca200_simulink/meshes/SY870-Boom.dae" />
+            </geometry>
+        </visual>
+        <collision>
+            <origin xyz="4.0 0.0 0.5" rpy="0.0 0.0 0.0"/>
+            <geometry>
+                <box size="6 1.5 2"/>
+            </geometry>
+        </collision>
+    </link>
+
+    <link name="arm2">
+        <visual>
+            <origin xyz="-7.18 0.0 -2.498" rpy="0.0 0.0 0.0"/>
+            <geometry>
+                <mesh filename="package://exca200_simulink/meshes/SY870-Arm.dae" />
+            </geometry>
+        </visual>
+        <collision>
+            <origin xyz="0.5 0.0 0.2" rpy="0.0 1.85 0.0"/>
+            <geometry>
+                <box size="1.5 1.5 5.0"/>
+            </geometry>
+        </collision>
+    </link>
+
+    <link name="bucket2">
+        <visual>
+            <origin xyz="-9.78 0.0 -2.498" rpy="0.0 0.0 0.0"/>
+            <geometry>
+                <mesh filename="package://exca200_simulink/meshes/SY870-Bucket.dae" />
+            </geometry>
+        </visual>
+        <collision>
+            <origin xyz="0.9 0.0 1.0" rpy="0.0 0.0 0.0"/>
+            <geometry>
+                <box size="3.0 3.0 2.0"/>
+            </geometry>
+        </collision>
+    </link>
+    
+    <link name="bucket_tip2">
+    </link>
+    
+    <link name="anchor2">
+    </link>
+
+
+<!-- joint -->
+    <joint name="base2" type="fixed">
+        <origin xyz="0 -15 0" rpy="0.0 0.0 -1.57"/>
+        <parent link="base_link"/>
+        <child link="base_link2"/>
+        <axis xyz="0.0 0.0 0.0"/>
+        <limit lower="0.0" upper="0.0" effort="0.0" velocity="0.0"/>
+    </joint>
+
+
+    <joint name="swing_joint2" type="continuous">
+    <!-- <joint name="swing" type="fixed"> -->
+        <origin xyz="0.0 0.0 0.0" rpy="0.0 0.0 0.0"/>
+        <parent link="base_link2"/>
+        <child link="platform2"/>
+        <axis xyz="0.0 0.0 1.0"/>
+        <limit lower="0.0" upper="0.0" effort="0.0" velocity="0.0"/>
+    </joint>
+
+    <joint name="anchor2" type="fixed">
+        <origin xyz="0.18 0.0 1.048" rpy="0.0 0.0 0.0"/>
+        <parent link="platform2"/>
+        <child link="anchor2"/>
+        <axis xyz="0.0 0.0 1.0"/>
+        <limit lower="0.0" upper="0.0" effort="0.0" velocity="0.0"/>
+    </joint>
+
+    <joint name="boom_joint2" type="revolute">
+        <origin xyz="0.0 0.0 0.0" rpy="0.0 0.0 0.0"/>
+        <parent link="anchor2"/>
+        <child link="boom2"/>
+        <axis xyz="0.0 -1.0 0.0"/>
+        <limit lower="-0.7930769" upper="0.9648172" effort="1000.0" velocity="1000.0"/>
+    </joint>
+
+    <joint name="arm_joint2" type="revolute">
+        <origin xyz="7.0 0.0 0.0" rpy="0.0 0.0 0.0"/>
+        <parent link="boom2"/>
+        <child link="arm2"/>
+        <axis xyz="0.0 -1.0 0.0"/>
+        <limit lower="-2.420595" upper="-0.65188" effort="1000.0" velocity="1000.0"/>
+    </joint>
+
+    <joint name="bucket_joint2" type="revolute">
+        <origin xyz="2.6 0.0 0.0" rpy="0.0 0.0 0.0"/>
+        <parent link="arm2"/>
+        <child link="bucket2"/>
+        <axis xyz="0.0 -1.0 0.0"/>
+        <limit lower="-2.32966" upper="0.5328486" effort="1000.0" velocity="1000.0"/>
+    </joint>
+
+    <joint name="bucket_to_bucket_tip2" type="fixed">
+        <parent link="bucket2" />
+        <child link="bucket_tip2" />
+        <origin xyz="2.088 0 0" />
+    </joint>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+</robot>

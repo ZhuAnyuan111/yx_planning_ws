@@ -1,0 +1,19 @@
+<launch>
+    
+    <!-- Node for the sy200_urdf_control -->
+    <node name="sy200_urdf_control" pkg="exca200_simulink" type="sy200_urdf_control">
+    </node>
+
+    <!-- Use the URDF model path -->
+    <param name="robot_description" textfile="$(find exca200_simulink)/urdf/exca870.urdf"/>
+
+    <!-- 运行joint_state_publisher节点，发布机器人的关节状态  -->
+	<!--node name="joint_state_publisher_gui" pkg="joint_state_publisher_gui" type="joint_state_publisher_gui" /-->
+
+    <!-- 运行robot_state_publisher节点，发布tf -->
+    <node name="robot_state_publisher" pkg="robot_state_publisher" type="robot_state_publisher" />
+
+    <!-- Node to launch RViz -->
+    <node name="rviz" pkg="rviz" type="rviz" output="screen" args="-d $(find exca200_simulink)/config/rviz.rviz"/>  
+
+</launch>

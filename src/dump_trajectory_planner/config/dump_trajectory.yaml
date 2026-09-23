@@ -30,7 +30,7 @@ feasibility:
   dump_height_max: 5.5              # 卸载点最高高度 (m)
   bucket_attitude_deg: -90.0        # 卸载姿态角 (deg，齿尖朝下)
 
-# ---- 关键航路点生成（照 MATLAB 方案，6 关节点）----
+# ---- 关键航路点生成（简化 4 航路点：WP1, WP4, WP5, WP6）----
 waypoint:
   # 姿态角上限：boom+arm+bucket ≥ 该值时用姿态角约束修正 bucket
   attitude_angle_deg: -180.0
@@ -95,25 +95,25 @@ visualization:
 # ---- 全局执行超时 (s) ----
 total_timeout_sec: 30.0
 
-# ---- 在线规划参数 ----
+# ---- 在线规划参数（3 段）----
 online_plan:
-  # 段完成关节角容差（各段独立，仅检查主导关节，deg）
-  # 各段完成判定由段索引自动匹配：
-  #   seg0 WP1→WP2：仅检查 boom
-  #   seg1 WP2→WP3：仅检查 swing
-  #   seg2 WP3→WP4：swing + 高度门控（铲斗高于卡车上表面）
-  #   seg3 WP4→WP5：仅检查 swing
-  #   seg4 WP5→WP6：arm + bucket（两者均达标才完成）
+  # 段完成关节角容差（各段独立，deg）
+  #   seg0 WP1→WP4：swing + boom + 高度门控
+  #   seg1 WP4→WP5：仅检查 swing
+  #   seg2 WP5→WP6：arm + bucket（两者均达标才完成）
+  seg0_swing_deg: 5.0
   seg0_boom_deg: 5.0
+  seg0_height_gate: true   # WP1→WP4 是否同时要求铲斗高度 > truck_top + margin
   seg1_swing_deg: 5.0
-  seg2_swing_deg: 5.0
-  seg2_height_gate: true   # WP3→WP4 是否同时要求铲斗高度 > truck_top + margin
-  seg3_swing_deg: 5.0
-  seg4_arm_deg: 10.0
-  seg4_bucket_deg: 20.0
+  seg2_arm_deg: 10.0
+  seg2_bucket_deg: 20.0
 
   # 段完成需连续确认帧数（防液压振荡误判）
   segment_confirm_frames: 3
+
+  # Seg0(WP1→WP4) 专用确认帧数：boom 阶跃后臂架存在 0.5~2Hz 液压振荡模态，
+  # 需更长确认窗（默认 8 帧=0.8s @10Hz）防止振荡中途误判达标 / 高度门控被瞬时值抖过
+  seg0_confirm_frames: 8
 
   # 段超时倍率：实际耗时 > 预期段时间 × 该值 则强制推进
   segment_timeout_factor: 2.0
@@ -124,8 +124,8 @@ online_plan:
   # 铲斗需超出卡车上表面的裕量 (m)
   bucket_clear_margin_m: 1.8
 
-  # 哪一段完成后触发铲斗高度门控（0=WP1→WP2完成后）
-  bucket_clear_seg_idx: 1       # 段1完成后(WP3到达)触发门控，确保铲斗高于卡车再开始跨越
+  # 哪一段完成后触发铲斗高度门控（0=WP1→WP4完成后）
+  bucket_clear_seg_idx: 0       # 段0完成后触发门控，确保铲斗高于卡车再进入卸载
 
   # 门控等待超时 (s)：超时未达标自动追加一小段 boom 提升后重试
   gate_timeout_sec: 4.0
@@ -138,3 +138,35 @@ online_plan:
 
   # 航路点限位校验：clamp 修正量超过该值时判定上游航路点不可信，终止激活 (deg)
   waypoint_clamp_abort_deg: 5.0
+
+  # ---- Seg0 两阶段策略参数 ----
+  # boom 阶跃中点比例：midpoint = WP1.boom + ratio * (WP4.boom - WP1.boom)
+  # 调小(如 0.35) → Phase1 举升行程更短、更早进入 Phase2 的 arm 外伸
+  seg0_midpoint_ratio: 0.5
+  # boom 到达中点 ±阈值(deg) 后切换到 PCHIP 过渡；调大(如 5) → 小行程工况更稳
+  seg0_switch_threshold_deg: 3.0
+  # Phase1 复合回转指令速率(deg/s)：boom 阶跃举升期间 swing 向 WP4 回转的速率。
+  # 独立于 waypoint/wp4_vel_swing_dps，可单独调"边升边转"快慢（实际受泵流量限制会滞后）
+  seg0_phase1_swing_dps: 15.0
+  # 小行程退化因子：阶跃行程 < 该值 × seg0_switch_threshold_deg 时，Seg0 退化为单段 PCHIP
+  seg0_min_step_factor: 2.0
+  # swing Phase1 阶跃偏移角(deg)：Phase1 swing 阶跃目标 = WP4.swing − 该偏移（沿回转方向）
+  # swing 到达此"卡车附近"角度后检查高度门控，通过则 Phase2 PCHIP 平滑收尾到 WP4
+  # 调大→Phase1 行程长(更多满功率回转)、Phase2 收尾短；调小→反之
+  seg0_swing_offset_deg: 15.0
+  # 铲斗姿态角目标（boom+arm+bucket，有符号 deg）：Phase1 每帧按实测 boom/arm 反馈
+  # 计算参考 bucket 维持该姿态；当前姿态角 >= 该值时才回调收斗（单向，不反向张斗）
+  bucket_attitude_target_deg: -180.0
+
+  # ---- 动态卸载点选取 ----
+  # 是否启用动态卸载点选取：true 且收到远点（/truck_center_unloadpoint_2）时，
+  # 在近点与远点之间生成候选点，按斗数选取；否则回退单点模式（近点即卸载点）
+  unload_selector_enable: true
+  # 候选点数量：近点到远点之间线性插值，由远及近排列
+  unload_candidates_count: 21
+  # 前 N 斗选最远可达点
+  unload_bucket_far_count: 3
+  # 接下来 N 斗选中间可达点
+  unload_bucket_mid_count: 3
+  # 最后 N 斗选最近可达点；超出 far+mid+near 总斗数默认选中间
+  unload_bucket_near_count: 2

@@ -1,0 +1,2 @@
+GP2mid_pkg:dig_trajectory_planner:dump_trajectory_planner:exca200_simulink:kinematics:reset_trajectory_planner:truck_dump_planner
+-DCATKIN_WHITELIST_PACKAGES=kinematics;dump_trajectory_planner;exca200_simulink -DCATKIN_DEVEL_PREFIX=/root/yx_planning_ws/devel -DCMAKE_INSTALL_PREFIX=/root/yx_planning_ws/install -G Unix Makefiles

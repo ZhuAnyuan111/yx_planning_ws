@@ -289,6 +289,8 @@ void ComputeMiddleUpXY(const Point3& unload_point,
 }
 
 // ==================== GenerateDumpWaypoints ====================
+// 简化版：4 航路点 {WP1, WP4, WP5, WP6}，去掉 WP2/WP3 中间过渡点。
+// WP1→WP4 由节点端的两阶段策略（boom 阶跃 + PCHIP）驱动，无需中间航路点。
 
 DumpWaypointResult GenerateDumpWaypoints(
     const kinematics::JointState& start_joint,
@@ -328,12 +330,10 @@ DumpWaypointResult GenerateDumpWaypoints(
   kinematics::SwingBaseIkRequest ik_req;
   ik_req.target_pose.x = mx;
   ik_req.target_pose.y = my;
-  // 铰接点目标高度 = 卡车框高度 + 偏置（铲斗长度设为 0，目标点即铰接点）
   ik_req.target_pose.z = truck_top_height + p.wp4_height_bias;
   ik_req.target_pose.alpha = 0.0;
-  // 使用铲斗关节角求解（bucket_len=0 时该值不影响 swing/boom/arm 结果）
   ik_req.bucket_angle_deg = p.wp4_bucket_angle_deg;
-  ik_req.bucket_tooth_length_override = 0.0;  // 使用斗杆-铲斗铰接点而非齿尖
+  ik_req.bucket_tooth_length_override = 0.0;
   const auto ik = solver.swing_center_inverse_by_bucket_angle(ik_req);
   if (!ik.success) {
     std::ostringstream oss;
@@ -345,57 +345,15 @@ DumpWaypointResult GenerateDumpWaypoints(
   const double bo4 = Rad2Deg(ik.q.boom);
   const double ar4 = Rad2Deg(ik.q.arm);
 
-  // ---------- WP3: swing3（swing 沿最短路径展开，处理 0°/360° 跨界）----------
-  // sw4 相对 sw1 展开：sw1→sw4 取最短弧，展开后 |sw4u - sw1| ≤ 180°
+  // ---------- swing 展开（处理 0°/360° 跨界）----------
+  // sw4 相对 sw1 展开：保证 |sw4u - sw1| ≤ 180°
   const double sw4u = sw1 + SignedShortestDiffDeg(sw1, sw4);
-  const double diff14 = std::abs(sw4u - sw1);  // sw1→sw4 最短弧长
-  const double dir14 = Sign(sw4u - sw1);       // 回转方向（重合时为 0）
-  // 弧中点：sw1=350°, sw4=10° → sw3=360°(≡0°)，而非算术平均的 180°
-  double sw3 = 0.5 * (sw1 + sw4u);
-  if (0.5 * diff14 <= p.wp3_swing_step_deg) {
-    // 中点距 WP4 过近（|median-sw4| = diff14/2 ≤ step）→ 从 WP4 朝起点方向退一步
-    sw3 = sw4u - dir14 * p.wp3_swing_step_deg;
-  }
 
-  // sw_unload 相对 sw4u 展开：保证 swing 链 sw1→sw3→sw4→sw5 相邻差均 ≤ 180°，
-  // 后续所有 std::abs 差值与段时间计算在展开链上直接成立
+  // sw_unload 相对 sw4u 展开：保证 swing 链相邻差均 ≤ 180°
   const double sw_unl_u = sw4u + SignedShortestDiffDeg(sw4u, sw_unload);
 
-  // ---------- WP2: 动臂提升，仅 boom；swing/arm/bucket 保持起点 ----------
-  const double sw2 = sw1;
-  const double boom2_low = std::max(bo4 - p.max_boom_lift24_deg, bo1);
-  const double boom2_high = bo4;
-
-  const double swing_diff_23 = std::abs(sw3 - sw2);
-  double bo2;
-  if (swing_diff_23 <= p.p3_min_z0_swing_deg) {
-    bo2 = boom2_high;
-  } else if (swing_diff_23 >= p.p3_max_z0_swing_deg) {
-    bo2 = boom2_low;
-  } else {
-    // swing 差在 (min, max)：diff 越大 → boom2 越低
-    bo2 = LinearInterp(p.p3_max_z0_swing_deg, p.p3_min_z0_swing_deg,
-                       boom2_low, boom2_high, swing_diff_23);
-  }
-  if (bo2 <= bo1) bo2 = bo1 + 1.0;  // 至少略高于起点
-
-  double ar2 = ar1 + (bo1 - bo2);      // 保姿态相对不变
-  if (ar2 <= ar1) ar2 = ar1;           // 防倒退
-
-  const double bk2 = AdjustBucketByAttitude(bo2, ar2, bk1, attitude,
-                                             bkt_lo, bkt_hi);
-
-  // ---------- WP3: boom3/arm3 混合，bucket 姿态限制 ----------
-  double bo3 = p.p3_boom_cof * bo2 + (1.0 - p.p3_boom_cof) * bo4;
-  if (bo3 < bo2) bo3 = bo2;
-  double ar3 = p.p3_arm_cof * ar2 + (1.0 - p.p3_arm_cof) * ar4;
-  if (ar3 < ar2) ar3 = ar2;
-
-  const double bk3 = AdjustBucketByAttitude(bo3, ar3, bk2, attitude,
-                                             bkt_lo, bkt_hi);
-
-  // ---------- WP4: bucket 姿态限制 ----------
-  const double bk4 = AdjustBucketByAttitude(bo4, ar4, bk3, attitude,
+  // ---------- WP4: bucket 姿态限制（基于 WP1 的 bucket）----------
+  const double bk4 = AdjustBucketByAttitude(bo4, ar4, bk1, attitude,
                                              bkt_lo, bkt_hi);
 
   // ---------- WP5: swing 到位，boom/arm 混合，bucket 姿态限制且不倒退 ----------
@@ -411,58 +369,40 @@ DumpWaypointResult GenerateDumpWaypoints(
   const double ar6 = ar_unload;
   const double bk6 = bk_unload;
 
-  // ---------- 段时间 ----------
+  // ---------- 段时间（4 航路点 → 3 段）----------
   const double t1 = 0.0;
 
-  const double t2_dur = std::abs(bo2 - bo1) / std::max(p.wp2_vel_boom_dps, 1e-6);
+  // Seg0: WP1→WP4（boom+swing 联动，段时间取主导关节）
+  const double t2_dur = std::max(
+      std::abs(bo4 - bo1) / std::max(p.wp2_vel_boom_dps, 1e-6),
+      std::abs(sw4u - sw1) / std::max(p.wp4_vel_swing_dps, 1e-6));
   const double t2 = t1 + t2_dur;
 
-  // WP3 swing 速度：|sw3-sw2| 越大 → 速度越大（与在线 seg1 共用同一插值）
-  const double wp3_vel_swing = Wp3SwingVelDps(p, std::abs(sw3 - sw2));
-  const double t3_dur = std::max(
-      std::abs(sw3 - sw2) / std::max(wp3_vel_swing, 1e-6),
-      std::abs(bo3 - bo2) / std::max(p.wp2_vel_boom_dps, 1e-6));
-  const double t3 = t2 + t3_dur;
-
-  const double t4_dur = std::max(
-      std::abs(sw4u - sw3) / std::max(p.wp4_vel_swing_dps, 1e-6),
-      std::abs(ar4 - ar3) / std::max(p.wp4_vel_arm_dps, 1e-6));
-  const double t4 = t3 + t4_dur;
-
-  const double t5_dur = std::max({
+  // Seg1: WP4→WP5（swing 到位 + boom/arm 过渡）
+  const double t3_dur = std::max({
       std::abs(sw5 - sw4u) / std::max(p.wp4_vel_swing_dps, 1e-6),
       std::abs(bo5 - bo4) / std::max(p.wp5_vel_boom_dps, 1e-6),
       std::abs(ar5 - ar4) / std::max(p.wp5_vel_arm_dps, 1e-6)});
-  const double t5 = t4 + t5_dur;
+  const double t3 = t2 + t3_dur;
 
-  // WP5→WP6 段 boom/arm/bucket 均在运动，段时间取三关节最大者（与在线段规划一致）
-  const double t6_dur = std::max({
+  // Seg2: WP5→WP6（arm/bucket/boom 均在运动）
+  const double t4_dur = std::max({
       std::abs(bk6 - bk5) / std::max(p.wp5_vel_bkt_dps, 1e-6),
       std::abs(bo6 - bo5) / std::max(p.wp5_vel_boom_dps, 1e-6),
       std::abs(ar6 - ar5) / std::max(p.wp5_vel_arm_dps, 1e-6)});
-  const double t6 = t5 + t6_dur;
+  const double t4 = t3 + t4_dur;
 
-  // ---------- 打包 ----------
+  // ---------- 打包（4 航路点）----------
   result.waypoints = {
-      PackDeg(sw1, bo1, ar1, bk1),
-      PackDeg(sw2, bo2, ar2, bk2),
-      PackDeg(sw3, bo3, ar3, bk3),
-      PackDeg(sw4u, bo4, ar4, bk4),
-      PackDeg(sw5, bo5, ar5, bk5),
-      PackDeg(sw6, bo6, ar6, bk6),
+      PackDeg(sw1, bo1, ar1, bk1),       // WP1: 起点
+      PackDeg(sw4u, bo4, ar4, bk4),      // WP4: 厢上过渡点
+      PackDeg(sw5, bo5, ar5, bk5),       // WP5: 卸载过渡点
+      PackDeg(sw6, bo6, ar6, bk6),       // WP6: 终点
   };
-  result.t_array = {t1, t2, t3, t4, t5, t6};
+  result.t_array = {t1, t2, t3, t4};
   result.success = true;
   result.message = "ok";
   return result;
-}
-
-double Wp3SwingVelDps(const WaypointParams& p, double swing_diff_deg) {
-  // 与 LinearInterp 语义一致：swing_diff 会被 clamp 到 [p3_min, p3_max]，
-  // 落在 [min_p3_swing_vel_dps, max_p3_swing_vel_dps] 之间，恒为正
-  return LinearInterp(p.p3_max_swing_deg, p.p3_min_swing_deg,
-                      p.max_p3_swing_vel_dps, p.min_p3_swing_vel_dps,
-                      swing_diff_deg);
 }
 
 }  // namespace dump_trajectory_planner

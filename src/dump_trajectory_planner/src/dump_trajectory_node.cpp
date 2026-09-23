@@ -49,13 +49,13 @@ DumpTrajectoryNode::DumpTrajectoryNode(ros::NodeHandle& nh,
   // 初始完成标志=1（空闲，可接收激活）
   reporter_.ReportFinishFlag(1.0);
 
-  ROS_INFO("[dump_traj] ready (online-plan mode). publish_rate=%.1fHz, "
-           "total_timeout=%.1fs, seg_tols=[%.1f,%.1f,%.1f,%.1f,%.1f/%.1f]deg, "
+  ROS_INFO("[dump_traj] ready (4-WP online-plan mode). publish_rate=%.1fHz, "
+           "total_timeout=%.1fs, seg_tols=[%.1f/%.1f,%.1f,%.1f/%.1f]deg, "
            "truck_top_height=%.2fm",
            publish_rate_hz_, total_timeout_sec_,
-           seg0_boom_tolerance_deg_, seg1_swing_tolerance_deg_,
-           seg2_swing_tolerance_deg_, seg3_swing_tolerance_deg_,
-           seg4_arm_tolerance_deg_, seg4_bucket_tolerance_deg_,
+           seg0_swing_tolerance_deg_, seg0_boom_tolerance_deg_,
+           seg1_swing_tolerance_deg_,
+           seg2_arm_tolerance_deg_, seg2_bucket_tolerance_deg_,
            truck_top_height_m_);
 }
 
@@ -139,24 +139,49 @@ void DumpTrajectoryNode::LoadParams() {
   publish_rate_hz_ = pnh_.param("publish_rate", 10.0);
   total_timeout_sec_ = pnh_.param("total_timeout_sec", 30.0);
 
-  // ---- 在线规划参数 ----
-  seg0_boom_tolerance_deg_ = pnh_.param("online_plan/seg0_boom_deg", 2.0);
-  seg1_swing_tolerance_deg_ = pnh_.param("online_plan/seg1_swing_deg", 2.0);
-  seg2_swing_tolerance_deg_ = pnh_.param("online_plan/seg2_swing_deg", 2.0);
-  seg2_height_gate_ = pnh_.param("online_plan/seg2_height_gate", true);
-  seg3_swing_tolerance_deg_ = pnh_.param("online_plan/seg3_swing_deg", 2.0);
-  seg4_arm_tolerance_deg_ = pnh_.param("online_plan/seg4_arm_deg", 2.0);
-  seg4_bucket_tolerance_deg_ = pnh_.param("online_plan/seg4_bucket_deg", 2.0);
+  // ---- 在线规划参数（3 段）----
+  seg0_swing_tolerance_deg_ = pnh_.param("online_plan/seg0_swing_deg", 5.0);
+  seg0_boom_tolerance_deg_ = pnh_.param("online_plan/seg0_boom_deg", 5.0);
+  seg0_height_gate_ = pnh_.param("online_plan/seg0_height_gate", true);
+  seg1_swing_tolerance_deg_ = pnh_.param("online_plan/seg1_swing_deg", 5.0);
+  seg2_arm_tolerance_deg_ = pnh_.param("online_plan/seg2_arm_deg", 10.0);
+  seg2_bucket_tolerance_deg_ = pnh_.param("online_plan/seg2_bucket_deg", 20.0);
   segment_timeout_factor_ = pnh_.param("online_plan/segment_timeout_factor", 2.0);
   segment_confirm_frames_ = pnh_.param("online_plan/segment_confirm_frames", 3);
+  seg0_confirm_frames_ = pnh_.param("online_plan/seg0_confirm_frames", 8);
   truck_top_height_m_ = pnh_.param("online_plan/truck_top_height_m", 3.5);
   bucket_clear_margin_m_ = pnh_.param("online_plan/bucket_clear_margin_m", 0.3);
-  bucket_clear_seg_idx_ = pnh_.param("online_plan/bucket_clear_seg_idx", 1);
+  bucket_clear_seg_idx_ = pnh_.param("online_plan/bucket_clear_seg_idx", 0);
   gate_timeout_sec_ = pnh_.param("online_plan/gate_timeout_sec", 4.0);
   gate_boost_boom_deg_ = pnh_.param("online_plan/gate_boost_boom_deg", 3.0);
   gate_max_boost_count_ = pnh_.param("online_plan/gate_max_boost_count", 3);
   waypoint_clamp_abort_deg_ =
       pnh_.param("online_plan/waypoint_clamp_abort_deg", 5.0);
+
+  // ---- Seg0 两阶段策略参数 ----
+  seg0_midpoint_ratio_ = pnh_.param("online_plan/seg0_midpoint_ratio", 0.5);
+  seg0_switch_threshold_deg_ =
+      pnh_.param("online_plan/seg0_switch_threshold_deg", 3.0);
+  bucket_attitude_target_deg_ =
+      pnh_.param("online_plan/bucket_attitude_target_deg", -180.0);
+  seg0_phase1_swing_dps_ =
+      pnh_.param("online_plan/seg0_phase1_swing_dps", 15.0);
+  seg0_min_step_factor_ =
+      pnh_.param("online_plan/seg0_min_step_factor", 2.0);
+  seg0_swing_offset_deg_ =
+      pnh_.param("online_plan/seg0_swing_offset_deg", 15.0);
+
+  // ---- 动态卸载点选取 ----
+  unload_selector_enable_ =
+      pnh_.param("online_plan/unload_selector_enable", true);
+  unload_candidates_count_ =
+      pnh_.param("online_plan/unload_candidates_count", 21);
+  unload_bucket_far_count_ =
+      pnh_.param("online_plan/unload_bucket_far_count", 3);
+  unload_bucket_mid_count_ =
+      pnh_.param("online_plan/unload_bucket_mid_count", 3);
+  unload_bucket_near_count_ =
+      pnh_.param("online_plan/unload_bucket_near_count", 2);
 }
 
 void DumpTrajectoryNode::SetupTopics() {
@@ -165,6 +190,12 @@ void DumpTrajectoryNode::SetupTopics() {
   sub_truck_pose_ = nh_.subscribe(
       "/truck_center_unloadpoint", 1,
       &DumpTrajectoryNode::TruckPoseCallback, this);
+  sub_truck_pose_far_ = nh_.subscribe(
+      "/truck_center_unloadpoint_2", 1,
+      &DumpTrajectoryNode::TruckPoseFarCallback, this);
+  sub_bucket_number_ = nh_.subscribe(
+      "/Sys_SUn_BucketNumber", 1,
+      &DumpTrajectoryNode::BucketNumberCallback, this);
   sub_joints_angle_ = nh_.subscribe(
       "/joints_angle", 1,
       &DumpTrajectoryNode::JointsAngleCallback, this);
@@ -183,6 +214,7 @@ void DumpTrajectoryNode::TruckPoseCallback(
     const geometry_msgs::Quaternion::ConstPtr& msg) {
   // x/y/z = 卡车中心坐标；w = RTK方位角 α (deg, 北0顺时针)
   // base 系卡车航向 β = (180 + α) mod 360 → rad
+  const bool first_recv = !truck_pose_valid_;
   truck_pose_.center_x = msg->x;
   truck_pose_.center_y = msg->y;
   truck_pose_.center_z = msg->z;      // RTK 高度，用于计算卡车框高度
@@ -195,6 +227,41 @@ void DumpTrajectoryNode::TruckPoseCallback(
   // 卸载点取卡车中心 x/y，z=0
   unload_point_ = {msg->x, msg->y, 0.0};
   unload_valid_ = true;
+
+  // 仅首次到达打印一次（该话题高频发布，避免每帧刷屏）
+  if (first_recv) {
+    ROS_INFO("[dump_traj] truck near point received: (%.2f, %.2f, %.2f) m, "
+             "rtk_heading=%.2f deg -> yaw_base=%.2f deg",
+             truck_pose_.center_x, truck_pose_.center_y, truck_pose_.center_z,
+             truck_pose_.rtk_heading_deg, Rad2Deg(truck_pose_.yaw_rad));
+  }
+}
+
+void DumpTrajectoryNode::TruckPoseFarCallback(
+    const geometry_msgs::Quaternion::ConstPtr& msg) {
+  // 卡车远点（x/y 有效，w 不使用）
+  const bool first_recv = !unload_far_valid_;
+  unload_point_far_ = {msg->x, msg->y, 0.0};
+  unload_far_valid_ = true;
+
+  // 仅首次到达打印一次（该话题高频发布，避免每帧刷屏）
+  if (first_recv) {
+    ROS_INFO("[dump_traj] truck far point received: (%.2f, %.2f) m "
+             "(dynamic unload selector %s)",
+             unload_point_far_.x, unload_point_far_.y,
+             unload_selector_enable_ ? "enabled" : "disabled");
+  }
+}
+
+void DumpTrajectoryNode::BucketNumberCallback(
+    const std_msgs::Float64::ConstPtr& msg) {
+  const int new_bn = static_cast<int>(msg->data);
+  // 仅在首次到达或斗数变化时打印（离散事件，驱动动态卸载点选取），避免每帧刷屏
+  if (!bucket_number_valid_ || new_bn != bucket_number_) {
+    ROS_INFO("[dump_traj] bucket number: %d -> %d", bucket_number_, new_bn);
+  }
+  bucket_number_ = new_bn;
+  bucket_number_valid_ = true;
 }
 
 void DumpTrajectoryNode::JointsAngleCallback(
@@ -237,6 +304,108 @@ void DumpTrajectoryNode::UpdateBucketPos() {
   reporter_.ReportBucketPos(pose.x, pose.y, pose.z);
 }
 
+// ==================== 动态卸载点选取 ====================
+
+bool DumpTrajectoryNode::SelectUnloadPoint(FeasibilityResult& fr) {
+  // 前置条件：近点与远点均有效，且两点距离足够（避免退化）
+  if (!unload_valid_ || !unload_far_valid_) return false;
+  const double dist = std::hypot(unload_point_far_.x - unload_point_.x,
+                                 unload_point_far_.y - unload_point_.y);
+  if (dist < 0.5) {
+    ROS_INFO("[dump_traj] near-far distance %.2fm too small, skip selection",
+             dist);
+    return false;
+  }
+
+  // 生成候选点：index 0 = 远点，index count-1 = 近点（由远及近）
+  const int n = unload_candidates_count_;
+  struct Candidate {
+    Point3 point;
+    FeasibilityResult result;
+  };
+  std::vector<Candidate> candidates(n);
+  for (int i = 0; i < n; ++i) {
+    const double t = static_cast<double>(i) / (n - 1);  // 0=远, 1=近
+    candidates[i].point.x =
+        unload_point_far_.x + t * (unload_point_.x - unload_point_far_.x);
+    candidates[i].point.y =
+        unload_point_far_.y + t * (unload_point_.y - unload_point_far_.y);
+    candidates[i].point.z = 0.0;
+  }
+
+  // 逐候选验证可达性（由远及近）
+  int feasible_count = 0;
+  for (int i = 0; i < n; ++i) {
+    candidates[i].result =
+        CheckReachable(candidates[i].point, feasibility_params_, *solver_);
+    if (candidates[i].result.reachable) ++feasible_count;
+  }
+  if (feasible_count == 0) {
+    ROS_WARN("[dump_traj] no feasible candidate among %d points", n);
+    return false;
+  }
+
+  // 可达区域：最远可达(index 最小)、最近可达(index 最大)、中间
+  int far_idx = -1, near_idx = -1;
+  for (int i = 0; i < n; ++i) {
+    if (candidates[i].result.reachable) {
+      if (far_idx < 0) far_idx = i;   // 由远及近，首个可达即最远
+      near_idx = i;                    // 最后一个可达即最近
+    }
+  }
+  const int mid_idx = (far_idx + near_idx) / 2;
+  // 中间点若不可达，向最近可达点靠拢
+  int mid_feasible = mid_idx;
+  if (!candidates[mid_feasible].result.reachable) {
+    // 在 [far_idx, near_idx] 范围内找距 mid_idx 最近的可达点
+    int best_dist = n;
+    for (int i = far_idx; i <= near_idx; ++i) {
+      if (candidates[i].result.reachable &&
+          std::abs(i - mid_idx) < best_dist) {
+        best_dist = std::abs(i - mid_idx);
+        mid_feasible = i;
+      }
+    }
+  }
+
+  ROS_INFO("[dump_traj] candidates: %d/%d feasible, far=#%d(%.2f,%.2f) "
+           "mid=#%d(%.2f,%.2f) near=#%d(%.2f,%.2f)",
+           feasible_count, n,
+           far_idx, candidates[far_idx].point.x, candidates[far_idx].point.y,
+           mid_feasible, candidates[mid_feasible].point.x,
+           candidates[mid_feasible].point.y,
+           near_idx, candidates[near_idx].point.x, candidates[near_idx].point.y);
+
+  // 按斗数选取：前 far_count 斗→最远，中间 mid_count 斗→中间，
+  // 后 near_count 斗→最近，超出→中间
+  const int bn = bucket_number_valid_ ? bucket_number_ : 0;
+  int selected_idx;
+  const char* selected_label;
+  if (bn >= 1 && bn <= unload_bucket_far_count_) {
+    selected_idx = far_idx;
+    selected_label = "far";
+  } else if (bn > unload_bucket_far_count_ &&
+             bn <= unload_bucket_far_count_ + unload_bucket_mid_count_) {
+    selected_idx = mid_feasible;
+    selected_label = "mid";
+  } else if (bn > unload_bucket_far_count_ + unload_bucket_mid_count_ &&
+             bn <= unload_bucket_far_count_ + unload_bucket_mid_count_ +
+                       unload_bucket_near_count_) {
+    selected_idx = near_idx;
+    selected_label = "near";
+  } else {
+    selected_idx = mid_feasible;
+    selected_label = "mid(default)";
+  }
+
+  unload_point_ = candidates[selected_idx].point;
+  fr = candidates[selected_idx].result;
+  ROS_INFO("[dump_traj] bucket #%d -> selected %s point #%d (%.2f, %.2f)",
+           bn, selected_label, selected_idx,
+           unload_point_.x, unload_point_.y);
+  return true;
+}
+
 // ==================== 激活 ====================
 
 void DumpTrajectoryNode::ActivateCallback(
@@ -261,9 +430,20 @@ void DumpTrajectoryNode::ActivateCallback(
 
   if (!CheckInputsValid()) return;
 
-  // 可行性检查（IK 求解 unload_joint）
-  const FeasibilityResult fr =
-      CheckReachable(unload_point_, feasibility_params_, *solver_);
+  // 动态卸载点选取：启用且远点有效时，在近点与远点之间按斗数选取
+  FeasibilityResult fr;
+  bool use_dynamic = false;
+  if (unload_selector_enable_ && unload_far_valid_) {
+    use_dynamic = SelectUnloadPoint(fr);
+    if (!use_dynamic) {
+      ROS_INFO("[dump_traj] dynamic selection unavailable, "
+               "fallback to original point");
+    }
+  }
+  if (!use_dynamic) {
+    // 单点模式（未启用 / 未收到远点 / 选取失败回退）
+    fr = CheckReachable(unload_point_, feasibility_params_, *solver_);
+  }
   // 发布卸载点校验结果（latched，上位机据此判断是否换点重试）
   reporter_.ReportFeasible(fr.reachable);
   if (!fr.reachable) {
@@ -288,7 +468,7 @@ void DumpTrajectoryNode::ActivateCallback(
     return;
   }
 
-  // 打印 WP1-WP6 航路点（deg）
+  // 打印航路点（deg）
   for (size_t i = 0; i < wpts.waypoints.size(); ++i) {
     const auto& wp = wpts.waypoints[i];
     ROS_INFO("[dump_traj] WP%zu: swing=%.2f boom=%.2f arm=%.2f bucket=%.2f (deg), t=%.2fs",
@@ -333,7 +513,7 @@ void DumpTrajectoryNode::ActivateCallback(
   // 计算各航路点目标切线（用于段间平滑过渡，依赖 segment_times_）
   ComputeWaypointTangents();
 
-  ROS_INFO("[dump_traj] waypoints generated (online-plan mode):");
+  ROS_INFO("[dump_traj] waypoints generated (4-WP online-plan mode):");
   for (size_t i = 0; i < waypoints_.size(); ++i) {
     const auto& q = waypoints_[i];
     ROS_INFO("[dump_traj]   WP%zu t=%.2f  swing=%.2f boom=%.2f arm=%.2f bkt=%.2f",
@@ -396,16 +576,116 @@ void DumpTrajectoryNode::TimerCallback(const ros::TimerEvent& /*event*/) {
       break;
 
     case DumpPhase::kExecutingSegment: {
-      // 判定当前段推进结果
+      // ---- Seg0 Phase 1：阶跃段特殊处理 ----
+      if (current_seg_idx_ == 0 && !seg0_phase1_complete_) {
+        // bucket 实时姿态保持（用户规格）：每帧用实测 boom/arm 反馈角计算维持目标姿态角
+        // 所需的参考 bucket 角并输出（非规划期算死的理论值）。单向约束：仅当姿态角 >=
+        // 目标时回调收斗到 bucket_hold；否则保持上一帧参考（起点为 seg_start.bucket），
+        // 避免反向张斗。bucket_hold 越限则裁剪到关节限位。
+        const double bucket_hold_rad =
+            Deg2Rad(bucket_attitude_target_deg_) - current_joint_.boom - current_joint_.arm;
+        const double att_ref_deg =
+            Rad2Deg(current_joint_.boom + current_joint_.arm + seg0_phase1_cmd_.bucket);
+        if (att_ref_deg >= bucket_attitude_target_deg_) {
+          seg0_phase1_cmd_.bucket = Deg2Rad(std::max(
+              waypoint_params_.bucket_limit_lower_deg,
+              std::min(waypoint_params_.bucket_limit_upper_deg, Rad2Deg(bucket_hold_rad))));
+        }
+        // 发布指令（boom=中点阶跃饱和举升, arm 保持不变, swing=阶跃到"卡车附近", bucket 实时维持姿态）
+        PublishTrajectoryFrame(seg0_phase1_cmd_, true);
+        // 检查 swing 是否到达"卡车附近"阈值内（决策 3：不管 boom 是否到位，swing 到位必须检查高度）
+        const double swing_err_deg = ShortestAngularDistanceDeg(
+            Rad2Deg(current_joint_.swing), Rad2Deg(seg0_phase1_cmd_.swing));
+        if (swing_err_deg <= seg0_switch_threshold_deg_) {
+          // swing 到位：检查高度门控
+          if (!IsBucketAboveTruck()) {
+            // 高度不足 → 转入门控 boost 重试（boost 抬升 boom 直到齿尖高于卡车）
+            ROS_WARN("[dump_traj] seg0 swing arrived (err=%.2f deg) but bucket below truck "
+                     "(height=%.2fm <= %.2fm), entering height gate for boost-retry",
+                     swing_err_deg, bucket_height_,
+                     truck_top_height_m_ + bucket_clear_margin_m_);
+            vel_estimator_.Clear();
+            gate_hold_cmd_ = current_joint_;
+            gate_start_time_ = ros::Time::now();
+            phase_ = DumpPhase::kWaitBucketClear;
+            return;
+          }
+          // 高度 OK → Phase 1 完成：切换到 Phase 2（PCHIP 从当前关节角到 WP4）
+          seg0_phase1_complete_ = true;
+          const kinematics::JointState& wp4 = waypoints_[1];
+          // Phase2 起点：boom/bucket 取实测值；swing 取 Phase1 指令值续接（决策 2：
+          // 参考轨迹起点为上一时刻参考值而非实测，保证指令连续；速度取实测保证斜率匹配）
+          kinematics::JointState phase2_start = current_joint_;
+          phase2_start.swing = seg0_phase1_cmd_.swing;
+          double sw_diff = NormalizeRadToPi(phase2_start.swing - wp4.swing);
+          phase2_start.swing = wp4.swing + sw_diff;
+          // arm 阶跃：切换时刻斗杆直接命令到 WP4 目标角
+          phase2_start.arm = wp4.arm;
+          // 计算 Phase 2 时长（arm 已阶跃到位，仅 boom/swing 决定时长）
+          double p2_boom_diff = std::abs(Rad2Deg(wp4.boom - phase2_start.boom));
+          double p2_swing_diff = std::abs(Rad2Deg(wp4.swing - phase2_start.swing));
+          double p2_arm_diff = std::abs(Rad2Deg(wp4.arm - phase2_start.arm));  // =0
+          double p2_time = std::max({
+              p2_boom_diff / waypoint_params_.wp2_vel_boom_dps,
+              p2_swing_diff / waypoint_params_.wp4_vel_swing_dps,
+              p2_arm_diff / waypoint_params_.wp4_vel_arm_dps});
+          p2_time = std::max(p2_time, kMinSegmentTime);
+          // Phase2 起点切线取当前实测速度（防阀反向冲击）
+          kinematics::JointState v_start = vel_estimator_.Estimate();
+          v_start.arm = 0.0;  // arm 已阶跃到 WP4 并保持，起点速度置 0
+          kinematics::JointState v_end{};  // 终点切线 0：到 WP4 需停住
+          // 起点斜率可衔接约束：p2_time ≤ 3Δ/|v_start|（Fritsch-Carlson α≤3）
+          auto slope_cap = [&](double diff_deg, double v_dps) {
+            if (std::abs(v_dps) < 1e-6 || diff_deg < 1e-6) return p2_time;
+            return 3.0 * diff_deg / std::abs(v_dps);
+          };
+          p2_time = std::min(p2_time, slope_cap(p2_boom_diff, Rad2Deg(v_start.boom)));
+          p2_time = std::min(p2_time, slope_cap(p2_swing_diff, Rad2Deg(v_start.swing)));
+          p2_time = std::min(p2_time, slope_cap(p2_arm_diff, Rad2Deg(v_start.arm)));
+          p2_time = std::max(p2_time, kMinSegmentTime);
+          seg_trajectory_ = InterpolateSegmentWithTangents(
+              phase2_start, wp4, v_start, v_end,
+              p2_time, 1.0 / publish_rate_hz_);
+          seg_frame_idx_ = 0;
+          seg_planned_time_ = p2_time;
+          seg_start_time_ = ros::Time::now();
+          confirm_count_ = 0;
+          visualizer_.PublishSegmentTrajectory(seg_trajectory_, *solver_);
+          ROS_INFO("[dump_traj] seg0 Phase1->Phase2: swing arrived (err=%.2f deg), "
+                   "height OK (%.2fm), PCHIP boom=%.1f->%.1f swing=%.1f->%.1f deg, "
+                   "v_start bm=%.2f sw=%.2f deg/s, %zu frames, %.2fs",
+                   swing_err_deg, bucket_height_,
+                   Rad2Deg(phase2_start.boom), Rad2Deg(wp4.boom),
+                   Rad2Deg(phase2_start.swing), Rad2Deg(wp4.swing),
+                   Rad2Deg(v_start.boom), Rad2Deg(v_start.swing),
+                   seg_trajectory_.size(), p2_time);
+        } else {
+          // Phase1 独立超时：swing 阶跃卡滞时转入高度门控复用 boost 重试
+          const double p1_elapsed = (ros::Time::now() - seg_start_time_).toSec();
+          if (p1_elapsed > seg0_phase1_timeout_sec_) {
+            ROS_WARN("[dump_traj] seg0 Phase1 timeout (%.1fs > %.1fs, swing_err=%.2f deg), "
+                     "entering height gate for boost-retry",
+                     p1_elapsed, seg0_phase1_timeout_sec_, swing_err_deg);
+            vel_estimator_.Clear();
+            gate_hold_cmd_ = current_joint_;
+            gate_start_time_ = ros::Time::now();
+            phase_ = DumpPhase::kWaitBucketClear;
+            return;
+          }
+        }
+        break;
+      }
+
+      // ---- 通用段执行逻辑（Seg0 Phase2 / Seg1 / Seg2）----
       const SegResult seg_result = CheckSegmentProgress();
       if (seg_result == SegResult::kComplete) {
         AdvanceToNextSegment();
         return;
       }
       if (seg_result == SegResult::kEnterGate) {
-        // 转入高度门控：清空速度历史（停车后速度归零），等待/boost 重试跨越
+        // 转入高度门控：清空速度历史，等待/boost 重试跨越
         vel_estimator_.Clear();
-        gate_hold_cmd_ = current_joint_;  // 锁存当前姿态，门控期间恒定发布
+        gate_hold_cmd_ = current_joint_;
         gate_start_time_ = ros::Time::now();
         phase_ = DumpPhase::kWaitBucketClear;
         return;
@@ -415,7 +695,6 @@ void DumpTrajectoryNode::TimerCallback(const ros::TimerEvent& /*event*/) {
         PublishTrajectoryFrame(seg_trajectory_[seg_frame_idx_], true);
         ++seg_frame_idx_;
       } else {
-        // 轨迹帧已发完，但关节还未到达目标，保持发布最后一帧
         PublishTrajectoryFrame(seg_trajectory_.back(), true);
       }
       break;
@@ -539,112 +818,165 @@ void DumpTrajectoryNode::PlanCurrentSegment() {
   double arm_diff = std::abs(Rad2Deg(seg_end.arm - seg_start.arm));
   double bkt_diff = std::abs(Rad2Deg(seg_end.bucket - seg_start.bucket));
 
-  // 根据段索引使用对应的主导关节速度
+  // Seg0 是否启用两阶段（boom 阶跃 + PCHIP）策略：仅当 boom 需要抬升时启用。
+  // boom 持平/下降时退化为纯 PCHIP——避免下降阶跃使动臂重力助势自由下落、
+  // 回油节流口吸空；且此时“阶跃换最快响应”的收益本就不存在。
+  bool seg0_two_phase = false;
   if (current_seg_idx_ == 0) {
-    // WP1→WP2: 动臂提升段
-    max_time = boom_diff / waypoint_params_.wp2_vel_boom_dps;
+    const double boom_rise_rad = seg_end.boom - seg_start.boom;
+    const double boom_rise_deg = Rad2Deg(boom_rise_rad);
+    // 小行程退化保护：阶跃中点行程 = ratio × 抬升量。若该行程不足切换阈值的
+    // seg0_min_step_factor 倍，Phase1 会首帧即满足切换条件（甚至 boom 持平/下降时行程
+    // 为负），退化为无意义的瞬时跳变；此时直接走纯 PCHIP 更平滑安全。
+    const double step_deg = seg0_midpoint_ratio_ * boom_rise_deg;
+    seg0_two_phase = (step_deg >= seg0_min_step_factor_ * seg0_switch_threshold_deg_);
+    // 非两阶段：直接标记 Phase1 完成，走通用 PCHIP 执行分支
+    seg0_phase1_complete_ = !seg0_two_phase;
+    if (seg0_two_phase) {
+      const double boom_mid = seg_start.boom + seg0_midpoint_ratio_ * boom_rise_rad;
+      const double boom_step_rad = boom_mid - seg_start.boom;  // 有符号，仅用于超时估算
+      seg0_phase1_cmd_ = seg_start;      // arm/bucket/swing 先继承起点
+      seg0_phase1_cmd_.boom = boom_mid;  // boom 阶跃到中点：饱和举升，抬高齿尖获得跨越裕度
+      // arm 在 Phase1 保持不变（用户规格）：boom 饱和举升阶段斗杆不动，待 swing 到位
+      // 后于 Phase2 再外伸到 WP4。既避免 boom(高压举升)+arm 同帧饱和抢泵流量，
+      // 又符合"先抬升跨越、到位再外伸入厢"的卸载动作顺序。
+      // swing 阶跃到"卡车附近"（WP4.swing 沿回转方向偏移固定角度）：
+      // Phase1 期间 swing 阀口饱和快速回转，到达偏移目标后检查高度门控，
+      // 通过则 Phase2 PCHIP 平滑收尾到 WP4.swing（决策 1：固定偏移角）。
+      const double sw_travel_rad = seg_end.swing - seg_start.swing;
+      const double sw_offset_rad = Deg2Rad(seg0_swing_offset_deg_);
+      if (std::abs(sw_travel_rad) > sw_offset_rad) {
+        const double sw_dir = (sw_travel_rad >= 0.0) ? 1.0 : -1.0;
+        seg0_phase1_cmd_.swing = seg_end.swing - sw_dir * sw_offset_rad;
+      } else {
+        // swing 行程不足偏移量：直接阶跃到 WP4（Phase2 swing 行程为 0）
+        seg0_phase1_cmd_.swing = seg_end.swing;
+      }
+      // bucket 不在此预算理论值：Phase1 每帧按实测 boom/arm 反馈角实时计算参考 bucket 角
+      // 以维持姿态（见 TimerCallback）。seg0_phase1_cmd_.bucket 先继承起点角，作为
+      // 姿态未超目标时的保持基准。
+      // Phase1 独立超时：取 boom 阶跃与 swing 阶跃的预期耗时较大者 × 超时倍率
+      const double swing_step_deg =
+          std::abs(Rad2Deg(seg0_phase1_cmd_.swing - seg_start.swing));
+      seg0_phase1_timeout_sec_ = std::max(
+          kMinSegmentTime,
+          std::max(
+              std::abs(Rad2Deg(boom_step_rad)) /
+                  std::max(waypoint_params_.wp2_vel_boom_dps, 1e-6),
+              swing_step_deg /
+                  std::max(seg0_phase1_swing_dps_, 1e-6)) *
+              segment_timeout_factor_);
+    }
+    // 段时间取 boom 和 swing 主导关节的较大值
+    max_time = std::max(
+        boom_diff / waypoint_params_.wp2_vel_boom_dps,
+        swing_diff / waypoint_params_.wp4_vel_swing_dps);
   } else if (current_seg_idx_ == 1) {
-    // WP2→WP3: 回转主导，回转速度随回转幅度插值（小回转→慢速），
-    // 与生成器 t3_dur 严格一致（swing 用插值速度，第二项用 boom 提升速度）
-    double wp3_vel_swing = Wp3SwingVelDps(waypoint_params_, swing_diff);
-    double t_swing = swing_diff / std::max(wp3_vel_swing, 1e-6);
-    double t_boom = boom_diff / waypoint_params_.wp2_vel_boom_dps;
-    max_time = std::max(t_swing, t_boom);
-  } else if (current_seg_idx_ == 2) {
-    // WP3→WP4: 回转主导段（回转到厢上过渡方位）
-    double t_swing = swing_diff / waypoint_params_.wp4_vel_swing_dps;
-    double t_arm = arm_diff / waypoint_params_.wp4_vel_arm_dps;
-    max_time = std::max(t_swing, t_arm);
-  } else if (current_seg_idx_ == 3) {
-    // WP4→WP5: 回转到卸载方位（swing 是本段完成判定关节，必须计入段时间），
-    // 同时 boom/arm 混合过渡 —— 取三者最大者，防止指令回转速度超设计值
-    double t_swing = swing_diff / waypoint_params_.wp4_vel_swing_dps;
-    double t_boom = boom_diff / waypoint_params_.wp5_vel_boom_dps;
-    double t_arm = arm_diff / waypoint_params_.wp5_vel_arm_dps;
-    max_time = std::max({t_swing, t_boom, t_arm});
+    // Seg1: WP4→WP5（swing 到位 + boom/arm 过渡）
+    max_time = std::max({
+        swing_diff / waypoint_params_.wp4_vel_swing_dps,
+        boom_diff / waypoint_params_.wp5_vel_boom_dps,
+        arm_diff / waypoint_params_.wp5_vel_arm_dps});
   } else {
-    // WP5→WP6: 臂架主导段
-    double t_boom = boom_diff / waypoint_params_.wp5_vel_boom_dps;
-    double t_arm = arm_diff / waypoint_params_.wp5_vel_arm_dps;
-    double t_bkt = bkt_diff / waypoint_params_.wp5_vel_bkt_dps;
-    max_time = std::max({t_boom, t_arm, t_bkt});
+    // Seg2: WP5→WP6（arm/bucket/boom 均在运动）
+    max_time = std::max({
+        boom_diff / waypoint_params_.wp5_vel_boom_dps,
+        arm_diff / waypoint_params_.wp5_vel_arm_dps,
+        bkt_diff / waypoint_params_.wp5_vel_bkt_dps});
   }
   max_time = std::max(max_time, kMinSegmentTime);
 
-  // 确定起点切线：从反馈估计实际速度
-  // 第一段静止启动；其它段用历史估计（门控后若 history 已清空则自然返回0）
-  kinematics::JointState v_start{};
-  if (current_seg_idx_ > 0) {
+  // Seg0 两阶段策略：Phase 1 期间不生成 PCHIP 轨迹（恒定发布阶跃指令）；
+  // Seg0 退化（boom 不抬升）与 Seg1/Seg2 均生成 PCHIP 局部轨迹
+  if (current_seg_idx_ == 0 && seg0_two_phase) {
+    seg_trajectory_.clear();
+    seg_frame_idx_ = 0;
+  } else {
+    // Seg0(退化)/Seg1/Seg2：使用 PCHIP 插值生成局部轨迹
+    // 起点切线：从反馈估计实际速度（门控后若 history 已清空则自然返回 0）
+    kinematics::JointState v_start{};
     v_start = vel_estimator_.Estimate();
+    // 终点切线：从预计算的目标切线取
+    const kinematics::JointState& v_end = wp_tangents_[current_seg_idx_ + 1];
+    seg_trajectory_ = InterpolateSegmentWithTangents(
+        seg_start, seg_end, v_start, v_end, max_time, 1.0 / publish_rate_hz_);
+    seg_frame_idx_ = 0;
+
+    // 可视化：更新当前段轨迹折线
+    visualizer_.PublishSegmentTrajectory(seg_trajectory_, *solver_);
+
+    ROS_INFO("[dump_traj] segment %d planned (PCHIP): %zu frames, %.2fs "
+             "(v_start: sw=%.2f bm=%.2f | v_end: sw=%.2f bm=%.2f)",
+             current_seg_idx_, seg_trajectory_.size(), max_time,
+             Rad2Deg(v_start.swing), Rad2Deg(v_start.boom),
+             Rad2Deg(v_end.swing), Rad2Deg(v_end.boom));
   }
 
-  // 确定终点切线：从预计算的目标切线取
-  const kinematics::JointState& v_end = wp_tangents_[current_seg_idx_ + 1];
-
-  // 使用带显式切线的 Hermite 插值生成局部轨迹
-  seg_trajectory_ = InterpolateSegmentWithTangents(
-      seg_start, seg_end, v_start, v_end, max_time, 1.0 / publish_rate_hz_);
-  seg_frame_idx_ = 0;
   seg_start_time_ = ros::Time::now();
-  seg_planned_time_ = max_time;  // 记录在线实际段时长，供超时判据使用
-  confirm_count_ = 0;  // 重置段完成防抖计数
+  seg_planned_time_ = max_time;
+  confirm_count_ = 0;
 
-  // 可视化：更新当前段轨迹折线
-  visualizer_.PublishSegmentTrajectory(seg_trajectory_, *solver_);
-
-  ROS_INFO("[dump_traj] segment %d planned online: %zu frames, %.2fs "
-           "(v_start: sw=%.2f bm=%.2f | v_end: sw=%.2f bm=%.2f)",
-           current_seg_idx_, seg_trajectory_.size(), max_time,
-           Rad2Deg(v_start.swing), Rad2Deg(v_start.boom),
-           Rad2Deg(v_end.swing), Rad2Deg(v_end.boom));
+  if (current_seg_idx_ == 0 && seg0_two_phase) {
+    ROS_INFO("[dump_traj] segment 0 planned (two-phase): boom step %.1f->%.1f deg, "
+             "arm held %.1f deg, swing step %.1f->%.1f deg (offset=%.1f), "
+             "threshold=%.1f deg, phase1_timeout=%.2fs, time=%.2fs",
+             Rad2Deg(seg_start.boom),
+             Rad2Deg(seg0_phase1_cmd_.boom),
+             Rad2Deg(seg0_phase1_cmd_.arm),
+             Rad2Deg(seg_start.swing),
+             Rad2Deg(seg0_phase1_cmd_.swing),
+             seg0_swing_offset_deg_,
+             seg0_switch_threshold_deg_, seg0_phase1_timeout_sec_, max_time);
+  } else if (current_seg_idx_ == 0) {
+    ROS_INFO("[dump_traj] segment 0 single-phase PCHIP (boom rise=%.1f deg, "
+             "step=%.1f deg < %.1fx threshold %.1f deg, skip step phase)",
+             Rad2Deg(seg_end.boom - seg_start.boom),
+             seg0_midpoint_ratio_ * Rad2Deg(seg_end.boom - seg_start.boom),
+             seg0_min_step_factor_,
+             seg0_min_step_factor_ * seg0_switch_threshold_deg_);
+  }
 
   phase_ = DumpPhase::kExecutingSegment;
 }
 
 DumpTrajectoryNode::SegResult DumpTrajectoryNode::CheckSegmentProgress() {
-  // 1. 主判定：仅检查该段指定的主导关节（需连续 N 帧确认，防抖动）
-  double seg_err = ComputeSegError(current_seg_idx_);
-  double tol = 0.0;
-  switch (current_seg_idx_) {
-    case 0: tol = seg0_boom_tolerance_deg_; break;
-    case 1: tol = seg1_swing_tolerance_deg_; break;
-    case 2: tol = seg2_swing_tolerance_deg_; break;
-    case 3: tol = seg3_swing_tolerance_deg_; break;
-    default: tol = std::max(seg4_arm_tolerance_deg_, seg4_bucket_tolerance_deg_); break;
-  }
+  // 1. 主判定：该段所有主导关节逐关节达标（归一化误差 <= 1.0），需连续 N 帧确认。
+  //    Seg0 用更高的确认帧数以覆盖 boom 阶跃后的臂架液压振荡模态（防抖 +
+  //    防止高度门控在振荡中被瞬时值抖过）。
+  const double seg_err_ratio = ComputeSegError(current_seg_idx_);
+  const int confirm_need =
+      (current_seg_idx_ == 0) ? seg0_confirm_frames_ : segment_confirm_frames_;
 
-  if (seg_err <= tol) {
+  if (seg_err_ratio <= 1.0) {
     ++confirm_count_;
-    if (confirm_count_ >= segment_confirm_frames_) {
-      ROS_INFO("[dump_traj] segment %d complete (err=%.2fdeg <= tol=%.1fdeg, "
-               "confirmed %d frames)",
-               current_seg_idx_, seg_err, tol, confirm_count_);
+    if (confirm_count_ >= confirm_need) {
+      ROS_INFO("[dump_traj] segment %d complete (err_ratio=%.3f <= 1.0, "
+               "confirmed %d/%d frames)",
+               current_seg_idx_, seg_err_ratio, confirm_count_, confirm_need);
       return SegResult::kComplete;
     }
   } else {
     confirm_count_ = 0;
   }
 
-  // 2. 兜底：段超时处理
+  // 2. 兖底：段超时处理
   double seg_elapsed = (ros::Time::now() - seg_start_time_).toSec();
-  // 超时基准取"标称段时长"与"在线实际规划段时长"的较大者：
-  // 反馈起点残差大时在线段时长会更长，若仍用标称值会把正常段误判超时强推
   double seg_base_time =
       std::max(segment_times_[current_seg_idx_], seg_planned_time_);
   double seg_timeout = seg_base_time * segment_timeout_factor_;
   if (seg_elapsed > seg_timeout) {
-    // 安全优先：seg2 高度门控未达标时超时不强推（防止铲斗高度不足跨越卡车），
+    // 安全优先：seg0 高度门控未达标时超时不强推（防止铲斗高度不足跨越卡车），
     // 转入高度门控复用 boost 重试机制；次数耗尽由门控状态统一终止
-    if (current_seg_idx_ == 2 && seg2_height_gate_ && !IsBucketAboveTruck()) {
-      ROS_ERROR("[dump_traj] segment 2 timeout with bucket below truck top "
+    if (current_seg_idx_ == 0 && seg0_height_gate_ && !IsBucketAboveTruck()) {
+      ROS_ERROR("[dump_traj] segment 0 timeout with bucket below truck top "
                 "(height=%.2fm <= %.2fm), entering height gate for boost-retry "
                 "instead of forcing advance",
                 bucket_height_, truck_top_height_m_ + bucket_clear_margin_m_);
       return SegResult::kEnterGate;
     }
-    ROS_WARN("[dump_traj] segment %d timeout (%.1fs > %.1fs), err=%.2fdeg, "
+    ROS_WARN("[dump_traj] segment %d timeout (%.1fs > %.1fs), err_ratio=%.3f, "
              "forcing advance",
-             current_seg_idx_, seg_elapsed, seg_timeout, seg_err);
+             current_seg_idx_, seg_elapsed, seg_timeout, seg_err_ratio);
     return SegResult::kComplete;
   }
 
@@ -655,34 +987,37 @@ double DumpTrajectoryNode::ComputeSegError(int seg_idx) const {
   const kinematics::JointState& target = waypoints_[seg_idx + 1];
   const kinematics::JointState& cur = current_joint_;
 
+  // 返回“归一化段误差” = max_j(err_j / tol_j)：
+  //   <= 1.0 等价于该段所有主导关节各自达标（逐关节 AND 语义），
+  //   修正原 max(err) <= max(tol) 会让松容差放过紧关节的漏洞。
   switch (seg_idx) {
     case 0: {
-      // WP1→WP2：仅判断动臂
-      return std::abs(Rad2Deg(cur.boom - target.boom));
+      // WP1→WP4：swing + boom 逐关节达标 + 高度门控
+      if (seg0_height_gate_ && !IsBucketAboveTruck()) {
+        return 1e6;  // 铲斗未高于卡车上表面，阻止完成
+      }
+      const double swing_ratio =
+          ShortestAngularDistanceDeg(Rad2Deg(cur.swing), Rad2Deg(target.swing)) /
+          std::max(seg0_swing_tolerance_deg_, 1e-6);
+      const double boom_ratio =
+          std::abs(Rad2Deg(cur.boom - target.boom)) /
+          std::max(seg0_boom_tolerance_deg_, 1e-6);
+      return std::max(swing_ratio, boom_ratio);
     }
     case 1: {
-      // WP2→WP3：仅判断回转（最短角距）
-      return ShortestAngularDistanceDeg(Rad2Deg(cur.swing), Rad2Deg(target.swing));
-    }
-    case 2: {
-      // WP3→WP4：回转 + 高度门控
-      double swing_err = ShortestAngularDistanceDeg(
-          Rad2Deg(cur.swing), Rad2Deg(target.swing));
-      if (seg2_height_gate_ && !IsBucketAboveTruck()) {
-        // 铲斗未高于卡车上表面，返回大值阻止完成
-        return 1e6;
-      }
-      return swing_err;
-    }
-    case 3: {
       // WP4→WP5：仅判断回转
-      return ShortestAngularDistanceDeg(Rad2Deg(cur.swing), Rad2Deg(target.swing));
+      return ShortestAngularDistanceDeg(Rad2Deg(cur.swing), Rad2Deg(target.swing)) /
+             std::max(seg1_swing_tolerance_deg_, 1e-6);
     }
     default: {
-      // WP5→WP6：斗杆 + 铲斗
-      double arm_err = std::abs(Rad2Deg(cur.arm - target.arm));
-      double bkt_err = std::abs(Rad2Deg(cur.bucket - target.bucket));
-      return std::max(arm_err, bkt_err);
+      // WP5→WP6：斗杆 + 铲斗 逐关节达标
+      const double arm_ratio =
+          std::abs(Rad2Deg(cur.arm - target.arm)) /
+          std::max(seg2_arm_tolerance_deg_, 1e-6);
+      const double bkt_ratio =
+          std::abs(Rad2Deg(cur.bucket - target.bucket)) /
+          std::max(seg2_bucket_tolerance_deg_, 1e-6);
+      return std::max(arm_ratio, bkt_ratio);
     }
   }
 }
@@ -770,6 +1105,9 @@ void DumpTrajectoryNode::AdvanceToNextSegment() {
     ROS_INFO("[dump_traj] all segments complete, done");
   } else {
     // 进入下一段规划
+    ROS_INFO("[dump_traj] advance to segment %d/%d (WP%d->WP%d), planning next",
+             current_seg_idx_, total_segments_,
+             current_seg_idx_ + 1, current_seg_idx_ + 2);
     phase_ = DumpPhase::kPlanNextSegment;
   }
 }

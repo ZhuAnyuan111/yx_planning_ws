@@ -1,0 +1,8 @@
+prefix=/root/yx_planning_ws/install
+
+Name: exca200_simulink
+Description: Description of exca200_simulink
+Version: 0.0.0
+Cflags: 
+Libs: -L${prefix}/lib 
+Requires: 
