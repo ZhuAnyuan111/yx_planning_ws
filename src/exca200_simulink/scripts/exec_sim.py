@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """闭环执行模拟器（excavator executor simulator）。
 
-订阅卸载规划节点的执行指令 /RefDeviceTraj_Dump（geometry_msgs/Pose，
+订阅卸载规划节点的执行指令 /RefDeviceTraj_Unload（geometry_msgs/Pose，
 orientation.x/y/z/w = swing/boom/arm/bucket，单位 deg），用**速率限制**把指令
 转成"实际关节角"，回发反馈话题：
     /joints_angle          (geometry_msgs/Quaternion, x/y/z = boom/arm/bucket, deg)
@@ -55,7 +55,7 @@ class ExecSim:
         self.rate_hz = rospy.get_param('~publish_rate', 50.0)
         self.last = rospy.Time.now()
 
-        rospy.Subscriber('/RefDeviceTraj_Dump', Pose, self.cmd_cb, queue_size=1)
+        rospy.Subscriber('/RefDeviceTraj_Unload', Pose, self.cmd_cb, queue_size=1)
         self.pub_joints = rospy.Publisher('/joints_angle', Quaternion, queue_size=1)
         self.pub_swing = rospy.Publisher('/heading2swing_topic', Float32, queue_size=1)
         rospy.Timer(rospy.Duration(1.0 / self.rate_hz), self.step)

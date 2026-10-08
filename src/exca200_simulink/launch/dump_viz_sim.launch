@@ -2,7 +2,7 @@
   <!-- Unload trajectory planner - URDF visualization closed-loop sim (one-click).
        Data flow:
          scenario_pub  => (truck points / bucket number / activation)  => dump_trajectory_node
-         dump_trajectory_node  /RefDeviceTraj_Dump (deg)  => exec_sim
+         dump_trajectory_node  /RefDeviceTraj_Unload (deg)  => exec_sim
          exec_sim  /joints_angle + /heading2swing_topic (deg, actual)  => dump_trajectory_node (closed loop)
          traj_to_urdf_adapter: cmd/actual deg=>rad  =>  /Sys_RefDeviceTraj(2)  => sy200_urdf_control
          sy200_urdf_control  /joint_states (rad)  => robot_state_publisher  => /tf  => RViz

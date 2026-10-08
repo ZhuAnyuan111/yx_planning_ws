@@ -10,7 +10,7 @@ robot_state_publisher。而 dump_trajectory_node 的输出与反馈都是**角�
   robot1（原点主模型，/Sys_RefDeviceTraj）  <- 实际反馈
         /joints_angle(x/y/z=boom/arm/bucket deg) + /heading2swing_topic(swing deg)
   robot2（y=-15 偏移对比机，/Sys_RefDeviceTraj2） <- 规划指令
-        /RefDeviceTraj_Dump(orientation.x/y/z/w = swing/boom/arm/bucket deg)
+        /RefDeviceTraj_Unload(orientation.x/y/z/w = swing/boom/arm/bucket deg)
 
 输出 orientation 顺序与桥接节点一致：x=swing, y=boom, z=arm, w=bucket（rad）。
 若某关节在 RViz 中转向相反，把对应 sign_* 参数设为 -1 即可。
@@ -41,7 +41,7 @@ class TrajToUrdfAdapter:
 
         rospy.Subscriber('/joints_angle', Quaternion, self.fb_joints_cb, queue_size=1)
         rospy.Subscriber('/heading2swing_topic', Float32, self.fb_swing_cb, queue_size=1)
-        rospy.Subscriber('/RefDeviceTraj_Dump', Pose, self.cmd_cb, queue_size=1)
+        rospy.Subscriber('/RefDeviceTraj_Unload', Pose, self.cmd_cb, queue_size=1)
 
         self.pub_actual = rospy.Publisher('/Sys_RefDeviceTraj', Pose, queue_size=1)
         self.pub_cmd = rospy.Publisher('/Sys_RefDeviceTraj2', Pose, queue_size=1)
