@@ -4,7 +4,7 @@
 
 ## 功能概述
 
-- 由 `/Sys_SeqAction == 4.0` 激活；
+- 由 `/Sys_SeqAction == 4.0` 激活在线轨迹执行；另支持 `/Sys_SUn_FlagUnloadPlan == 1.0` 触发**预校验**（卸载点分布+航路点计算，只算不发轨迹），成功后发布 `/Sys_unloadPlanFinish = 1`；
 - 接收卡车近点及航向 `/truck_center_unloadpoint` → base 系 β=(180+α) mod 360 → rad；可选接收卡车远点 `/truck_center_unloadpoint_2`；
 - **动态卸载点选取**：收到远点时，在近点↔远点间生成 21 个候选点，由远及近做 IK 可达性验证，在可达区域取最远/中间/最近三点，按当前装载斗数 `/Sys_SUn_BucketNumber` 依次选取（前 3 斗最远、中 3 斗中间、后 2 斗最近、超出默认中间）；未收到远点或未启用时回退单点模式（近点即卸载点，z=0）；
 - 订阅实时关节角作为轨迹起点（swing 经 `/heading2swing_topic`，boom/arm/bucket 经 `/joints_angle`）；
@@ -12,29 +12,34 @@
 - 通过 [kinematics](../kinematics/README.md) 的 `swing_center_inverse_by_bucket_attitude` 做**真 IK 判定**，同时解算卸载点关节角；
 - 在**关节空间**生成 **4 关键航路点**（WP1/WP4/WP5/WP6），其中 WP4 入厢点由**回转圆与卡车厢矩形交点策略**确定；
 - 采用**基于航路点的在线规划**：每段基于实际关节角在线 PCHIP 插值，反馈驱动段推进；
-- **Seg0 两阶段策略**：boom + swing 双阶跃（boom 饱和举升 + swing 满功率回转到"卡车附近"）+ 高度门控 + PCHIP 平滑收尾，兼顾效率与液压友好；
+- **Seg0 两阶段策略**：swing 满功率回转到"卡车附近" + boom 随回转进度连续插值抬升 + 高度门控 + PCHIP 平滑收尾，兼顾效率与液压友好；
 - **铲斗高度门控**：Seg0 完成后，确认铲斗实际高度超过卡车上表面才允许跨越卡车；等待超时未达标时自动追加 boom 提升重试，次数耗尽则终止卸载；
-- 以 10 Hz 流式逐帧发布 `/RefDeviceTraj_Dump`（纯位置指令，无速度前馈）；
+- 以 10 Hz 流式逐帧发布 `/RefDeviceTraj_Unload`（纯位置指令，无速度前馈）；
+- 航路点定稿后发布卸载终点关节角 `/Sys_RUn_UnloadEndAngle`（latched，WP6/卸载点信息）；
 - **RViz 联调可视化**：卡车 3D 线框 + 挖掘机臂架线段 + WP 球体/标签 + WP4 回转圆 + 当前段轨迹折线 + 状态机调试文本。
 
 ## 话题接口
 
 | 方向 | 话题 | 类型 | 说明 |
 |:---:|:---|:---|:---|
-| Sub | `/Sys_SeqAction` | `std_msgs/Float64` | `data == 4.0` 触发卸载 |
+| Sub | `/Sys_SeqAction` | `std_msgs/Float64` | `data == 4.0` 触发卸载（在线轨迹执行） |
+| Sub | `/Sys_SUn_FlagUnloadPlan` | `std_msgs/Float64` | `data == 1.0` 触发预校验（卸载点分布+航路点计算，只算不发轨迹） |
 | Sub | `/truck_center_unloadpoint` | `geometry_msgs/Quaternion` | `x/y` = 卡车近点（base 系，m）；`w` = RTK 方位角 α（deg，北0顺时针） |
 | Sub | `/truck_center_unloadpoint_2` | `geometry_msgs/Quaternion` | `x/y` = 卡车远点（base 系，m），用于动态卸载点选取（可选，未收到则回退单点模式） |
 | Sub | `/Sys_SUn_BucketNumber` | `std_msgs/Float64` | `data` = 当前装载斗数，决定选取最远/中间/最近卸载点 |
 | Sub | `/joints_angle` | `geometry_msgs/Quaternion` | `x/y/z` = boom/arm/bucket 关节角（deg） |
 | Sub | `/heading2swing_topic` | `std_msgs/Float32` | `data` = swing 关节角（deg） |
-| **Pub** | **`/RefDeviceTraj_Dump`** | **`geometry_msgs/Pose`** | **`Orientation.x/y/z/w` = swing/boom/arm/bucket（deg）；`Position.x` 1=执行中 / 0=阶段结束** |
+| **Pub** | **`/RefDeviceTraj_Unload`** | **`geometry_msgs/Pose`** | **`Orientation.x/y/z/w` = swing/boom/arm/bucket（deg）；`Position.x` 1=执行中 / 0=阶段结束** |
 | Pub | `/Swing_topic` | `geometry_msgs/Point` | `x` = swing（deg），由 `/heading2swing_topic` 实时转发 |
 | Pub | `/RealBktPosXYZ` | `geometry_msgs/Point` | 铲斗齿尖坐标（base 系，m），由实时关节角经运动学 FK 计算 |
-| Pub | `/Sys_RUn_FlagUnloadExcuteFinish` | `std_msgs/Float64` | 0=执行中 / 1=结束或空闲（latched） |
+| Pub | `/Sys_RUn_UnloadEndAngle` | `geometry_msgs/Pose` | 卸载轨迹最终点（WP6/卸载点）关节角：`Orientation.x/y/z/w` = swing/boom/arm/bucket（deg）（latched，航路点定稿后发布一次） |
+| Pub | `/Sys_unloadPlanFinish` | `std_msgs/Float32` | 预校验完成标志：**1=卸载点分布+航路点计算完成且判定可达**；**0=不可达/计算失败/初始**（latched，由 `/Sys_SUn_FlagUnloadPlan` 触发） |
+| Pub | `/Sys_RUn_FlagUnloadExcuteFinish` | `std_msgs/Float64` | 卸载成功完成标志：**1=卸载轨迹成功执行完成**；**0=执行期间 / 跳出卸载阶段 / 异常中止 / 外部撤销**（latched） |
 | Pub | `/UPFeasible` | `std_msgs/Bool` | 卸载点可达性校验结果（latched） |
 | Pub | `/loadTraj_maxBoom` / `/loadTraj_maxZ` | `std_msgs/Float32` | 航路点动臂最大角度 / 齿尖最高 z（latched） |
+| Pub | `/Sys_RUn_UnloadPointSequence` | `std_msgs/Float32MultiArray` | **离线轨迹序列（适配原程序节点，后续可能移除）**：预校验计算成功后发布一次（2000×5 列优先 reshape 一维；row0 五列全 1=成功标志；row1..1999 前 4 列 swing/boom/arm/bucket（deg）、第 5 列段标志；航路点 PCHIP 插值到实际时长，不足补末点）（latched，由 `/Sys_SUn_FlagUnloadPlan` 触发） |
 | Pub | `/UT_PlanningPulse_topic` | `std_msgs/UInt32` | 功能安全状态字（位段结构见下） |
-| Pub | `dump_viz/*` | `visualization_msgs/MarkerArray` | 卡车/臂架/航路点/轨迹/状态文本（受 `visualization/enable` 总开关控制） |
+| Pub | `dump_viz/*` | `visualization_msgs/MarkerArray` | 卡车/臂架/航路点/轨迹/状态文本（受 `visualization/enable` 总开关控制）。节点运行期间**持续发布**：空闲态臂架跟随实时反馈，执行态臂架跟随指令帧 |
 
 `/UT_PlanningPulse_topic` 位拼接结构：
 
@@ -95,6 +100,50 @@
 
 段时间由主导关节速度决定（`max(|Δjoint|/vel_dps)`）。
 
+### 命名对应
+
+生成器内部命名 `WP1/WP4/WP5/WP6`（历史遗留），节点日志按索引打印为 `WP1/WP2/WP3/WP4`。对应关系：日志 WP2=厢上过渡点（内部 WP4）、日志 WP3=卸载过渡点（内部 WP5）、日志 WP4=终点（内部 WP6）。下文按**日志命名** WP1~WP4 描述。
+
+### 逐点设计详解
+
+**WP1 起点（挖掘终止点）**
+- swing/boom/arm 直接取实时反馈 `current_joint_`（终点锚定思想：起点取实时值）；
+- bucket 姿态修正：若 `boom+arm+bucket ≥ attitude_angle_deg(-180°)` → `bucket = attitude − boom − arm`，并 clamp 到 `bucket_limit[-170, 30]`；否则保持原值；
+- 切线=0（端点起停静止），`t=0`。
+
+**WP2 厢上过渡点 / 入厢点**
+- xy：`ComputeMiddleUpXY()` 回转圆策略（见下节）；
+- z（IK 目标高）：`truck_top_height + wp4_height_bias(1.5)`，其中 `truck_top_height = center_z − truck_height_offset(0.5)`（动态 RTK 框高）；
+- IK：`swing_center_inverse_by_bucket_angle`，`bucket_angle = wp4_bucket_angle_deg(25°)`，`bucket_tooth_length_override = 0`（目标点=斗杆-铲斗**铰接点**而非齿尖）→ 解出 swing/boom/arm；
+- bucket：`AdjustBucketByAttitude(bo, ar, bk1(WP1 的 bucket), attitude, limits)`，基于 WP1 bucket 保持卷收连续；
+- swing 展开：`sw2 = sw1 + SignedShortestDiff(sw1, sw_ik)`（与 WP1 差 ≤180°）；
+- **切线=0**（门控停止点 `bucket_clear_seg_idx_+1`）→ 到 WP2 速度归零，等待铲斗高度门控；
+- Seg0 时长 = `max(|Δboom|/wp2_vel_boom_dps, |Δswing|/wp4_vel_swing_dps)`；执行走 Seg0 两阶段策略（非纯插值）。
+
+**WP3 卸载过渡点 / swing 到位点**
+- swing = 卸载方位（相对 WP2 展开）→ 回转已到位；
+- boom/arm = `p5_boom_cof/p5_arm_cof(0.5)·WP2 + (1−cof)·unload` 中点混合；
+- bucket = 姿态修正（基于 WP2 bucket），且 `bk3 = max(bk3, bk2)` **防铲斗倒退/张斗**；
+- 切线 = Catmull-Rom 内部点（非 0，平滑通过）；
+- Seg1 时长 = `max(|Δswing|/wp4_vel_swing_dps, |Δboom|/wp5_vel_boom_dps, |Δarm|/wp5_vel_arm_dps)`。
+
+**WP4 终点（卸载点）**
+- 完整取 `unload_joint`（`CheckReachable` 的 IK 解），swing 用展开值；
+- 切线=0（端点停止）；
+- Seg2 时长 = `max(|Δbucket|/wp5_vel_bkt_dps, |Δboom|/wp5_vel_boom_dps, |Δarm|/wp5_vel_arm_dps)`。
+
+### 公共后处理
+
+- 限位校验 `ValidateWaypointsJointLimits`：逐点 clamp，修正量 ≤5° 继续(WARN)、>5° abort(ERROR)；
+- `UnwrapSwingSequence`：swing 序列展开防 0°/360° 跳变；
+- `segment_times_` = `t_array` 差分（≥最小段时长）；
+- `ComputeWaypointTangents`：Catmull-Rom 内部切线，**门控点(WP2)与两端点切线强制 0**（速度整形）；
+- 各段 PCHIP 插值（保形无超调）。
+
+### 遗留参数（已清理）
+
+旧 6 航路点版的中间过渡点参数（`wp3_swing_step_deg`、`p3_*` 系列、`max_boom_lift24_deg`）与被动态框高取代的 `online_plan/truck_top_height_m` 已从 yaml、`LoadParams` 与 `WaypointParams` 中全部移除，不再有"调了不生效"的隐患。
+
 ## 插值方法：PCHIP（保形分段三次 Hermite，无超调）
 
 段内公式（`s = (t - t_i) / T ∈ [0,1]`）：
@@ -107,6 +156,24 @@ h₀₁(s) = -2s³ + 3s²           h₁₁(s) = s³ - s²
 
 起终切线经 **Fritsch-Carlson 单调性修正**，保证插值不产生超调。详见 [cubic_hermite_interpolator.h](include/dump_trajectory_planner/cubic_hermite_interpolator.h)。
 
+## 段间衔接：飞越 vs 停稳（在线执行）
+
+整段卸载要求**连续平滑、中途不停**，故在线执行按航路点性质区分两类衔接（`IsFlythroughWaypoint`）：
+
+| 航路点 | 类型 | 起点位置 | 起点速度 `v_start` | 完成判据 |
+|:---:|:---|:---|:---|:---|
+| WP1 | 停止点（首点） | 实时关节角 | 实际速度估计（≈0） | — |
+| WP2 | 停止点（门控） | 实时关节角 | 实际速度估计（≈0） | 实时到位+确认保持+铲斗高度门控 |
+| **WP3** | **飞越点**（内部非门控） | **标称航路点** | **`wp_tangents_[2]`**（与上段 `v_end` 同源） | **指令播完即推进**（不停稳） |
+| WP4 | 停止点（末点） | — | — | 实时到位+确认保持 |
+
+**飞越点（WP3）三处保证 C¹ 连续、指令不跌零**：
+1. **位置连续**：下一段起点取**标称航路点**而非滞后实测值，避免指令回跳；
+2. **速度连续**：下一段 `v_start = wp_tangents_[2]`，与上一段 `v_end` 同源（Catmull-Rom 切线），整段指令速度不在 WP3 处跌零；
+3. **无切换间隙**：段完成时**同一帧内**立即规划并发布下一段首帧（不经 `kPlanNextSegment` 中转停发），消除 1~2 帧的指令停顿。
+
+> 停止点（WP1/WP2/WP4）仍用实时反馈起点 + 到位确认，门控点 WP2 允许停稳等待铲斗跨越卡车框（物理安全）。飞越逻辑仅作用于内部非门控点，与离线序列 `PublishOfflineSequence` 的连续 PCHIP 拼接行为一致。
+
 ## WP4 入厢点（回转圆与厢矩形交点策略）
 
 `ComputeMiddleUpXY()` 照 MATLAB `calc_entry_point_circle_strategy` 实现：
@@ -118,7 +185,7 @@ h₀₁(s) = -2s³ + 3s²           h₁₁(s) = s³ - s²
 5. **fallback**：无交点时，以矩形 4 条边上距离 O 最近的点为方向，在回转圆上取对应圆上投影作为 `p_entry`；
 6. **退化**：`R < 1e-6` 或方向量归零时，回退到卸载点 xy。
 
-> RTK 方位角 α 与挖机 base 系卡车航向 β 关系：`β = (180° + α) mod 360°`。
+> RTK 方位角 α 与挖机 base 系卡车航向 β 关系：`β = (180° − α) mod 360°`（北180/东90/南0/西270 逆时针增大；与 truck_dump_planner 6 方向闭环验证一致。曾误用 `+α` 导致卡车朝向镜像、厢体画偏）。
 
 ## Seg0 两阶段策略（核心）
 
@@ -126,13 +193,13 @@ Seg0（WP1→WP4）采用两阶段策略，兼顾效率与液压友好：
 
 ### 启用判据
 
-仅当 `step_deg = seg0_midpoint_ratio × boom抬升量 ≥ seg0_min_step_factor × seg0_switch_threshold_deg` **且 boom 抬升**时启用两阶段；否则退化为单段 PCHIP。
+仅当 `boom 抬升量 ≥ seg0_min_step_factor × seg0_switch_threshold_deg` 时启用两阶段；否则（含 boom 持平/下降，防重力助势下落）退化为单段 PCHIP。
 
 ### 运动分配
 
-| 关节 | **Phase1**（双阶跃段） | **Phase2**（swing 到位 + 高度 OK 后） |
+| 关节 | **Phase1**（回转+随动抬升段） | **Phase2**（swing 到位 + 高度 OK 后） |
 |---|---|---|
-| **boom** | 阶跃到中点 `WP1.boom+ratio×抬升`，阀口**饱和举升** | PCHIP 收尾到 WP4（低流量） |
+| **boom** | **随 swing 回转进度连续插值**从 `WP1.boom` 抬升到段终点 boom（进度单调锁定 + 按 `wp2_vel_boom_dps` 限速），回转到位时齿尖已接近跨越高度 | PCHIP 收尾到 WP4（低流量） |
 | **arm** | **保持起点不动**（零流量，避免与 boom 抢泵） | **阶跃外伸到 WP4.arm** |
 | **swing** | 阶跃到"卡车附近" `WP4.swing − sign×seg0_swing_offset_deg`，阀口**饱和回转** | PCHIP 续接到 WP4.swing，起点用 **Phase1 指令值**（保证指令连续），速度取**实测值**（保证斜率匹配） |
 | **bucket** | **每帧按实测 boom/arm 反馈实时算参考角**维持姿态（单向收斗） | PCHIP 到 WP4.bucket |
@@ -182,14 +249,14 @@ kDone ──[SeqAction==4 再次触发]──► kPlanNextSegment
 ## 段完成判定
 
 - **归一化逐关节判据**：`max_j(err_j / tol_j) ≤ 1.0`（等价于所有主导关节各自达标 AND，修正了旧 `max(err)≤max(tol)` 会让松容差放过紧关节的漏洞）。
-- **N 帧确认防抖**：Seg0 用 `seg0_confirm_frames=8`（覆盖 boom 阶跃后 0.5~2Hz 液压振荡模态），其余 `segment_confirm_frames=3`。
+- **N 帧确认防抖**：Seg0 用 `seg0_confirm_frames=8`（覆盖臂架抬升/回转段 0.5~2Hz 液压振荡模态），其余 `segment_confirm_frames=3`。
 - **超时兜底**：`base_time = max(标称段时长, 实际规划时长)`，超时 = base × `segment_timeout_factor(2.0)`。Seg0 若门控未达标 → `kEnterGate`（不强推，安全第一）；否则强制推进。
 - Seg0 高度门控未达标时 `ComputeSegError` 直接返回 `1e6` 阻止完成。
 
 ## 高度门控与 boost 重试
 
 - **触发点**：Seg0 Phase1 期间 swing 到达"卡车附近"时（**早于 Seg0 完成**，提前检测高度不足）。swing 到位后不管 boom 是否到位，立即检查高度。
-- **判据**：齿尖 FK 高度 `bucket_height_ > truck_top_height_m(2.0) + bucket_clear_margin_m(1.8) = 3.8m`。
+- **判据**：齿尖 FK 高度 `bucket_height_ > TruckTopHeight() + bucket_clear_margin_m(0.5)`，其中 `TruckTopHeight() = truck_center_z − truck_height_offset(0.5)` 为**动态框高**（随 RTK 高度变化）。⚠️ **margin 必须低于 WP2 齿尖可达裕量**（本工况约 1.4m）：曾设 1.8 使阈值 2.21m 高于全部航路点齿尖（最高 1.81m），高度门控与 Seg0 Phase1→Phase2 切换双双死锁，boost 耗尽必然中止。
 - **等待期**：恒定发布**锁存姿态** `gate_hold_cmd_`（不跟随反馈，避免液压保压沉降被逐帧追认成下沉指令）。
 - **boost 重试**：`gate_timeout_sec(4s)` 超时 → boom+`gate_boost_boom_deg(3°)`、arm 反向联动(Δarm=-Δboom)保姿态；最多 `gate_max_boost_count(6)` 次，耗尽或 boom 到上限 → abort。
 
@@ -254,8 +321,8 @@ dump_trajectory_planner/
 |:---|:---|:---|
 | `kinematics/*` | `boom_length/arm_length/bucket_tooth_length` + 销轴偏置 + 6 项关节限位 | 由 `KinematicsSolver` 加载 |
 | `feasibility/*` | `enable_envelope_prefilter`、`reach_min/max`、`dump_height_min/max`、`bucket_attitude_deg` | 包络粗筛 + IK 判定 |
-| `waypoint/*` | `attitude_angle_deg`、`wp4_height_bias`、`wp4_bucket_angle_deg`、`p3/p5_*_cof`、各段速度、`truck_box_length/width`、`wp4_R_coff` | 航路点生成 |
-| `online_plan/*` | `seg0_swing_deg/boom_deg`、`seg1_swing_deg`、`seg2_arm_deg/bucket_deg`、`seg0_confirm_frames`、`segment_confirm_frames`、`segment_timeout_factor`、`truck_top_height_m`、`bucket_clear_margin_m`、`bucket_clear_seg_idx`、`gate_timeout_sec`、`gate_boost_boom_deg`、`gate_max_boost_count`、`waypoint_clamp_abort_deg`、**`seg0_midpoint_ratio`、`seg0_switch_threshold_deg`、`seg0_phase1_swing_dps`、`seg0_min_step_factor`、`seg0_swing_offset_deg`、`bucket_attitude_target_deg`**、**`unload_selector_enable`、`unload_candidates_count`、`unload_bucket_far_count/mid_count/near_count`** | 在线规划、Seg0 两阶段与动态卸载点选取 |
+| `waypoint/*` | `attitude_angle_deg`、`wp4_height_bias`、`truck_height_offset`、`wp4_bucket_angle_deg`、`p5_boom/arm_cof`、`bucket_limit_*_deg`、各段速度、`truck_box_length/width`、`wp4_R_coff` | 航路点生成 |
+| `online_plan/*` | `seg0_swing_deg/boom_deg`、`seg1_swing_deg`、`seg2_arm_deg/bucket_deg`、`seg0_confirm_frames`、`segment_confirm_frames`、`segment_timeout_factor`、`bucket_clear_margin_m`、`bucket_clear_seg_idx`、`gate_timeout_sec`、`gate_boost_boom_deg`、`gate_boost_tolerance_deg`、`gate_max_boost_count`、`waypoint_clamp_abort_deg`、**`seg0_switch_threshold_deg`、`seg0_phase1_swing_dps`、`seg0_min_step_factor`、`seg0_swing_offset_deg`、`bucket_attitude_target_deg`**、**`unload_selector_enable`、`unload_candidates_count`、`unload_bucket_far_count/mid_count/near_count`** | 在线规划、Seg0 两阶段与动态卸载点选取 |
 | `visualization/*` | `enable`、`frame_id` | 可视化总开关与 marker 坐标系 |
 | 顶层 | `publish_rate`、`total_timeout_sec` | 全局 |
 
@@ -292,7 +359,7 @@ dump_trajectory_planner/
 | 静态检查 | ✅ 零错误 | GetProblems 无 error/warning |
 | **实机/仿真运行** | ⚠️ **未验证** | 所有设计均为理论，缺乏运行数据支撑 |
 | 单元测试 | ⚠️ 缺失 | TODO 里列了但没做 |
-| 下游速率限制器 | ⚠️ **未确认** | 决定阶跃策略是否真有效（上实机前最需确认） |
+| 下游速率限制器 | ⚠️ **未确认** | 决定 swing 阶跃/boom 限速指令是否被下游平滑（上实机前最需确认） |
 | 多执行器流量竞争 | ⚠️ 架构级未解 | 未做泵流量感知调度（路线 B） |
 
 **核心结论**：设计完整、理论自洽，但缺乏实机/仿真数据验证。上实机前最需确认下游是否有速率限制器。
@@ -305,7 +372,7 @@ dump_trajectory_planner/
 - [x] ~~段完成持续确认防抖~~（`segment_confirm_frames` 参数化）
 - [x] ~~门控高度不达标死等~~（超时自动 boom 提升重试，次数耗尽终止）
 - [x] ~~速度估计双话题混写相位偏差~~（swing/joints 两路历史分离，各自时间戳差分）
-- [x] ~~Seg0 两阶段策略~~（boom + swing 双阶跃 + 高度门控 + PCHIP 平滑收尾）
+- [x] ~~Seg0 两阶段策略~~（swing 阶跃回转 + boom 随进度插值抬升 + 高度门控 + PCHIP 平滑收尾；旧"boom 阶跃中点保持"方案已废弃）
 - [x] ~~归一化段误差判据~~（`max(err/tol)≤1.0`，逐关节 AND）
 - [x] ~~Phase2 起点切线衔接~~（`v_start=Estimate()` + 斜率可衔接约束）
 - [x] ~~bucket 实时姿态保持~~（每帧按实测 boom/arm 反馈计算参考 bucket）

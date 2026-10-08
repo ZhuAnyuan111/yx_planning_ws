@@ -11,7 +11,7 @@
 
 | 能力 | 接口 | 说明 |
 |:---|:---|:---|
-| 正向运动学（回转中心系） | `swing_center_forward(JointState)` | 输入关节角（rad），输出齿尖 3D 位姿 |
+| 正向运动学（回转中心系） | `swing_center_forward(JointState)` | 输入关节角（rad），输出齿尖 3D 位姿。**swing 约定与 IK 互逆**：swing=0 时臂架指向 -x（回转零位在机体后方），水平方向角 = swing − 180° |
 | 正向运动学（动臂销轴系） | `boom_pivot_forward(JointState)` | 输入关节角，输出 2D 位姿（臂平面内） |
 | 逆向运动学（给定铲斗**转角**） | `swing_center_inverse_by_bucket_angle(...)` | 3D 目标 + 铲斗转角 deg → 关节角 |
 | 逆向运动学（给定铲斗**姿态角**） | `swing_center_inverse_by_bucket_attitude(...)` | 3D 目标 + 齿尖姿态 deg → 关节角（常用于卸载） |

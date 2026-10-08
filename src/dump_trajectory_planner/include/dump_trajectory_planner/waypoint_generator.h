@@ -24,8 +24,10 @@ namespace dump_trajectory_planner {
 /// 卡车位姿（挖机 base 系）
 /// - center_x/center_y/center_z : 卡车中心坐标（m），z 为 RTK 高度
 /// - rtk_heading_deg   : RTK 方位角 α（deg，北0顺时针）
-/// - yaw_rad           : 卡车航向角 β（rad），来自 RTK 方位角经
-///                       β = (180° + α_rtk) mod 360° 转换
+///   - yaw_rad           : 卡车航向角 β（rad），来自 RTK 方位角经
+///                       β = (180° − α_rtk) mod 360° 转换
+///                       （北180/东90/南0/西270 逆时针增大，与
+///                        truck_dump_planner 6 方向闭环验证一致）
 struct TruckPose {
   double center_x = 0.0;
   double center_y = 0.0;
@@ -48,24 +50,6 @@ struct WaypointParams {
 
   // WP4 IK 求解的铲斗关节角（deg），用于 swing_center_inverse_by_bucket_angle
   double wp4_bucket_angle_deg = 25.0;
-
-  // WP3 swing 最小步长（deg）：|median - swing4| ≤ 该值时改为 swing4 ± 该值
-  double wp3_swing_step_deg = 5.0;
-
-  // WP2 boom 提升幅度插值（相对 swing 差）
-  double p3_min_z0_swing_deg = 10.0;    // swing 差 ≤ 此值 → boom 直接提到 WP4 高度
-  double p3_max_z0_swing_deg = 40.0;    // swing 差 ≥ 此值 → boom 只做最小提升
-  double max_boom_lift24_deg = 20.0;    // WP2 与 WP4 的 boom 最大差值
-
-  // WP3 swing 速度插值（相对 swing2→swing3 差）
-  double p3_min_swing_deg = 15.0;
-  double p3_max_swing_deg = 60.0;
-  double min_p3_swing_vel_dps = 5.0;
-  double max_p3_swing_vel_dps = 15.0;
-
-  // WP3 混合系数
-  double p3_boom_cof = 0.5;  // boom3 = cof·boom2 + (1-cof)·boom4
-  double p3_arm_cof = 0.5;   // arm3  = cof·arm2  + (1-cof)·arm4
 
   // WP5 混合系数
   double p5_boom_cof = 0.5;

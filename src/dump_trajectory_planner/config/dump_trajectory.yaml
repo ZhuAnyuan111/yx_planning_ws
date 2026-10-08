@@ -45,24 +45,6 @@ waypoint:
   # WP4 IK 求解的铲斗关节角（deg），bucket_len=0 时不影响 swing/boom/arm
   wp4_bucket_angle_deg: 25.0
 
-  # WP3 swing 最小步长：|median - swing4| ≤ 该值时用 swing4 ± 该值
-  wp3_swing_step_deg: 5.0
-
-  # WP2 boom 提升幅度插值参数
-  p3_min_z0_swing_deg: 10.0    # swing 差 ≤ 该值 → boom 直接提到 WP4 高度
-  p3_max_z0_swing_deg: 60.0    # swing 差 ≥ 该值 → boom 仅做最小提升
-  max_boom_lift24_deg: 20.0    # WP2 相对 WP4 的 boom 最大差值
-
-  # WP3 swing 速度插值参数
-  p3_min_swing_deg: 15.0
-  p3_max_swing_deg: 60.0
-  min_p3_swing_vel_dps: 10.0
-  max_p3_swing_vel_dps: 15.0
-
-  # WP3 混合系数：值越小 → 越早开始跟随
-  p3_boom_cof: 0.5             # boom3 = cof·boom2 + (1-cof)·boom4
-  p3_arm_cof: 0.5              # arm3  = cof·arm2  + (1-cof)·arm4
-
   # WP5 混合系数
   p5_boom_cof: 0.5
   p5_arm_cof: 0.5
@@ -118,11 +100,11 @@ online_plan:
   # 段超时倍率：实际耗时 > 预期段时间 × 该值 则强制推进
   segment_timeout_factor: 2.0
 
-  # 卡车上表面高度阈值 (m)：铲斗必须高于此值才允许进入下一段
-  truck_top_height_m: 2.0
-
   # 铲斗需超出卡车上表面的裕量 (m)
-  bucket_clear_margin_m: 1.8
+  # （卡车上表面高度为动态值：truck_center_z − waypoint/truck_height_offset；
+  #   阈值须低于 WP2 齿尖可达高度，否则门控死锁——曾设 1.8 导致阈值 2.21m
+  #   高于全部航路点齿尖(最高 1.81m)，boost 耗尽必然中止）
+  bucket_clear_margin_m: 0.5
 
   # 哪一段完成后触发铲斗高度门控（0=WP1→WP4完成后）
   bucket_clear_seg_idx: 0       # 段0完成后触发门控，确保铲斗高于卡车再进入卸载
@@ -133,6 +115,10 @@ online_plan:
   # 每次自动提升的 boom 角度 (deg)，arm 联动保持铲斗姿态
   gate_boost_boom_deg: 3.0
 
+  # boost 完成判定容差 (deg)：必须 < gate_boost_boom_deg，否则起始 boom_err(=增量)
+  # 就 <= 容差、首帧即误判完成，boost 空转（boom 根本不动）
+  gate_boost_tolerance_deg: 1.0
+
   # 最大自动提升次数：超过仍不达标则终止卸载（防止无限制提升）
   gate_max_boost_count: 6
 
@@ -140,15 +126,14 @@ online_plan:
   waypoint_clamp_abort_deg: 5.0
 
   # ---- Seg0 两阶段策略参数 ----
-  # boom 阶跃中点比例：midpoint = WP1.boom + ratio * (WP4.boom - WP1.boom)
-  # 调小(如 0.35) → Phase1 举升行程更短、更早进入 Phase2 的 arm 外伸
-  seg0_midpoint_ratio: 0.5
-  # boom 到达中点 ±阈值(deg) 后切换到 PCHIP 过渡；调大(如 5) → 小行程工况更稳
+  # Phase1 = swing 快速回转 + boom 随回转进度连续插值抬升（替代旧"阶跃中点保持"）；
+  # swing 到达目标后检查高度门控，通过则 Phase2 PCHIP 收尾到段终点
+  # swing 到达 Phase1 目标 ±阈值(deg)后检查高度门控
   seg0_switch_threshold_deg: 3.0
-  # Phase1 复合回转指令速率(deg/s)：boom 阶跃举升期间 swing 向 WP4 回转的速率。
+  # Phase1 复合回转指令速率(deg/s)：Phase1 期间 swing 向段终点回转的速率。
   # 独立于 waypoint/wp4_vel_swing_dps，可单独调"边升边转"快慢（实际受泵流量限制会滞后）
   seg0_phase1_swing_dps: 15.0
-  # 小行程退化因子：阶跃行程 < 该值 × seg0_switch_threshold_deg 时，Seg0 退化为单段 PCHIP
+  # 小行程退化因子：boom 抬升量 < 该值 × seg0_switch_threshold_deg 时，Seg0 退化为单段 PCHIP
   seg0_min_step_factor: 2.0
   # swing Phase1 阶跃偏移角(deg)：Phase1 swing 阶跃目标 = WP4.swing − 该偏移（沿回转方向）
   # swing 到达此"卡车附近"角度后检查高度门控，通过则 Phase2 PCHIP 平滑收尾到 WP4
@@ -170,3 +155,12 @@ online_plan:
   unload_bucket_mid_count: 3
   # 最后 N 斗选最近可达点；超出 far+mid+near 总斗数默认选中间
   unload_bucket_near_count: 2
+
+# ---- 离线轨迹序列（/Sys_RUn_UnloadPointSequence，适配原程序节点，后续可能移除）----
+# 预校验（/Sys_SUn_FlagUnloadPlan=1）计算成功后，用航路点 PCHIP 插值生成离线轨迹，
+# 填充为 2000x5 数组（row0 五列全 1=成功标志；row1..1999 前4列 swing/boom/arm/bucket deg、
+# 第5列段标志），列优先 reshape 成一维 Float32MultiArray 发布一次（latched）。
+offline_plan:
+  # 离线序列采样步长 (s)：航路点插值到实际时长的采样周期。
+  # 轨迹行共 1999 行，dt 越小可覆盖时长越短（1999*0.01≈20s），超出截断、不足补末点
+  seq_dt_sec: 0.01

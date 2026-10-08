@@ -3,10 +3,12 @@
 /// @file status_reporter.h
 /// @brief 状态上报器：统一管理全部状态/统计/适配类话题发布。
 ///
-/// 承载除执行指令流（/RefDeviceTraj_Dump）之外的全部发布出口：
+/// 承载除执行指令流（/RefDeviceTraj_Unload）之外的全部发布出口：
 ///   /Swing_topic                    swing 转发（下游协议兼容）
 ///   /RealBktPosXYZ                  FK 铲斗齿尖坐标
-///   /Sys_RUn_FlagUnloadExcuteFinish 完成标志（latched）
+///   /Sys_RUn_UnloadEndAngle         卸载终点关节角（latched）
+///   /Sys_unloadPlanFinish           预校验完成标志（latched）
+///   /Sys_RUn_FlagUnloadExcuteFinish 卸载成功完成标志（latched）
 ///   /UPFeasible                     卸载点可达性（latched）
 ///   /loadTraj_maxBoom | maxZ        航路点统计量（latched）
 ///   /UT_PlanningPulse_topic         功能安全状态字（心跳|模块ID|错误码）
@@ -15,6 +17,7 @@
 
 #include <ros/ros.h>
 #include <geometry_msgs/Point.h>
+#include <geometry_msgs/Pose.h>
 #include <std_msgs/Bool.h>
 #include <std_msgs/Float32.h>
 #include <std_msgs/Float64.h>
@@ -33,8 +36,18 @@ class StatusReporter {
   /// 发布 FK 铲斗齿尖坐标 (base 系, m)
   void ReportBucketPos(double x, double y, double z);
 
-  /// 发布完成标志：0.0=执行中 / 1.0=结束或空闲
+  /// 发布卸载成功完成标志（语义：1=卸载轨迹成功执行完成；
+  /// 0=执行期间 / 跳出卸载阶段 / 异常中止 / 外部撤销）
   void ReportFinishFlag(double value);
+
+  /// 发布卸载轨迹最终点（WP6/卸载点）关节角，latched。
+  /// Orientation.x/y/z/w = swing/boom/arm/bucket（deg）
+  void ReportUnloadEndAngle(double swing_deg, double boom_deg,
+                            double arm_deg, double bucket_deg);
+
+  /// 发布预校验完成标志（/Sys_SUn_FlagUnloadPlan 触发）：
+  /// 1=卸载点分布+航路点计算完成且判定可达；0=不可达/计算失败/初始
+  void ReportUnloadPlanFinish(float value);
 
   /// 发布卸载点可达性校验结果
   void ReportFeasible(bool reachable);
@@ -57,6 +70,8 @@ class StatusReporter {
 
   ros::Publisher pub_swing_;        // /Swing_topic 转发
   ros::Publisher pub_bucket_pos_;   // /RealBktPosXYZ（FK 计算）
+  ros::Publisher pub_unload_end_angle_;  // /Sys_RUn_UnloadEndAngle (latched)
+  ros::Publisher pub_unload_plan_finish_;  // /Sys_unloadPlanFinish (latched)
   ros::Publisher pub_finish_flag_;  // /Sys_RUn_FlagUnloadExcuteFinish (latched)
   ros::Publisher pub_up_feasible_;  // /UPFeasible (latched)
   ros::Publisher pub_max_boom_;     // /loadTraj_maxBoom (latched)

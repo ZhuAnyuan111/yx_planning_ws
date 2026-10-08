@@ -12,7 +12,9 @@
 ///   - 全部插值统一使用 PCHIP（保形，无超调）
 ///
 /// 触发协议：
-///   /Sys_SeqAction (std_msgs/Float64) data==4.0 触发卸载阶段
+///   /Sys_SeqAction          (std_msgs/Float64) data==4.0 触发卸载阶段（在线轨迹执行）
+///   /Sys_SUn_FlagUnloadPlan (std_msgs/Float64) data==1.0 触发预校验（卸载点分布+航路点计算，
+///                            只算不发轨迹；成功后发 /Sys_unloadPlanFinish=1）
 ///
 /// 输入话题：
 ///   /truck_center_unloadpoint   (geometry_msgs/Quaternion) x/y=卡车近点(base系,m) w=RTK方位角(deg)
@@ -22,12 +24,15 @@
 ///   /heading2swing_topic        (std_msgs/Float32)         data=swing (deg)
 ///
 /// 输出话题：
-///   /RefDeviceTraj_Dump (geometry_msgs/Pose)   执行指令流（本类直发）
+///   /RefDeviceTraj_Unload (geometry_msgs/Pose)   执行指令流（本类直发）
 ///     Orientation.x/y/z/w = swing/boom/arm/bucket (deg)
 ///     Position.x = 1.0 执行中 / 0.0 阶段结束
+///   /Sys_RUn_UnloadPointSequence (std_msgs/Float32MultiArray)  离线轨迹序列（本类直发，
+///     适配原程序节点，后续可能移除）：预校验成功后发布 2000x5 列优先一维数组（latched）
 ///   其余状态/统计/适配类话题（/Swing_topic、/RealBktPosXYZ、/UPFeasible、
-///   /loadTraj_*、/Sys_RUn_FlagUnloadExcuteFinish、/UT_PlanningPulse_topic）
-///   统一由 StatusReporter 发布，协议详见 status_reporter.h。
+///   /loadTraj_*、/Sys_RUn_UnloadEndAngle、/Sys_unloadPlanFinish、
+///   /Sys_RUn_FlagUnloadExcuteFinish、/UT_PlanningPulse_topic）统一由
+///   StatusReporter 发布，协议详见 status_reporter.h。
 
 #include <memory>
 #include <vector>
@@ -36,6 +41,7 @@
 #include <geometry_msgs/Pose.h>
 #include <geometry_msgs/Quaternion.h>
 #include <std_msgs/Float32.h>
+#include <std_msgs/Float32MultiArray.h>
 #include <std_msgs/Float64.h>
 
 #include <kinematics/kinematics.hpp>
@@ -69,6 +75,7 @@ class DumpTrajectoryNode {
 
   // ==================== 订阅回调 ====================
   void ActivateCallback(const std_msgs::Float64::ConstPtr& msg);
+  void PlanUnloadPointCallback(const std_msgs::Float64::ConstPtr& msg);
   void TruckPoseCallback(const geometry_msgs::Quaternion::ConstPtr& msg);
   void TruckPoseFarCallback(const geometry_msgs::Quaternion::ConstPtr& msg);
   void BucketNumberCallback(const std_msgs::Float64::ConstPtr& msg);
@@ -96,7 +103,11 @@ class DumpTrajectoryNode {
   /// <=1.0 即该段所有主导关节各自达标；seg0=swing+boom, seg1=swing, seg2=arm+bucket
   double ComputeSegError(int seg_idx) const;
 
-  /// @brief 检查铲斗是否高于卡车上表面
+  /// @brief 卡车框顶高（base 系, m）= 卡车 RTK 中心高 center_z − truck_height_offset
+  /// （与 waypoint_generator 中 WP4 框高计算逻辑一致，动态随 RTK 高度变化）
+  double TruckTopHeight() const;
+
+  /// @brief 检查铲斗是否高于卡车框顶（齿尖高 > 框顶高 + 裕量）
   bool IsBucketAboveTruck() const;
 
   /// @brief 启动门控自动 boom 提升小段（boom 抬升 + arm 联动保姿态）
@@ -109,10 +120,26 @@ class DumpTrajectoryNode {
   /// @brief 计算各航路点的目标切线（Catmull-Rom，门控点/端点为0）
   void ComputeWaypointTangents();
 
+  /// @brief 判断某航路点是否为“飞越点”（内部非门控点）。
+  /// 飞越点处指令位置/速度保持连续、不停稳（整段卸载平滑过渡）；
+  /// 首点、门控点、末点为“停止点”（实时到位 + 确认保持，可停）。
+  bool IsFlythroughWaypoint(int wp_idx) const;
+
   /// @brief 动态卸载点选取：在近点与远点之间生成候选，验证可达性，按斗数选取
   /// @param[out] fr 选中点的可行性结果（含 unload_joint）
   /// @return true=选取成功（unload_point_ 已更新）；false=无候选可达
   bool SelectUnloadPoint(FeasibilityResult& fr);
+
+  /// @brief 预校验公共流程：输入校验→卸载点选取→可达性→航路点生成→限位校验→
+  ///        统计量/终点角发布→段时长/切线计算→可视化。只算不发执行轨迹。
+  /// @return true=预校验通过（waypoints_ 已缓存）；false=任一环节失败
+  bool PlanWaypoints();
+
+  /// @brief 发布离线轨迹序列 /Sys_RUn_UnloadPointSequence（适配原程序节点，后续可能移除）。
+  /// 2000x5 列优先 reshape 成一维 Float32MultiArray：
+  ///   row0 = 计算成功标志（5 列全 1）；row1..1999 = 轨迹（前4列 swing/boom/arm/bucket deg，
+  ///   第5列段标志）；航路点 PCHIP 插值到实际时长，不足补末点。
+  void PublishOfflineSequence();
 
   // ==================== 工具方法 ====================
   bool CheckInputsValid();
@@ -122,7 +149,7 @@ class DumpTrajectoryNode {
   ///         false=修正量超过阈值（上游航路点不可信），调用方应终止激活
   bool ValidateWaypointsJointLimits();
 
-  /// @brief 发布执行指令帧（/RefDeviceTraj_Dump，含 swing 回包与首帧零速头）
+  /// @brief 发布执行指令帧（/RefDeviceTraj_Unload，含 swing 回包与首帧零速头）
   void PublishTrajectoryFrame(const kinematics::JointState& q, bool running);
   void StopExecution();
 
@@ -144,6 +171,7 @@ class DumpTrajectoryNode {
 
   // 订阅
   ros::Subscriber sub_activate_;
+  ros::Subscriber sub_plan_unload_point_;  // /Sys_SUn_FlagUnloadPlan（预校验）
   ros::Subscriber sub_truck_pose_;
   ros::Subscriber sub_truck_pose_far_;   // /truck_center_unloadpoint_2（卡车远点）
   ros::Subscriber sub_bucket_number_;    // /Sys_SUn_BucketNumber（装载斗数）
@@ -151,7 +179,8 @@ class DumpTrajectoryNode {
   ros::Subscriber sub_swing_;
 
   // 发布（仅执行指令流，其余见 StatusReporter）
-  ros::Publisher pub_trajectory_;   // /RefDeviceTraj_Dump
+  ros::Publisher pub_trajectory_;   // /RefDeviceTraj_Unload
+  ros::Publisher pub_unload_seq_;   // /Sys_RUn_UnloadPointSequence（离线序列，适配原程序）
 
   // 定时器
   ros::Timer timer_;
@@ -172,21 +201,21 @@ class DumpTrajectoryNode {
   double segment_timeout_factor_ = 2.0;    // 段超时倍率（段时间 × 该值）
   int segment_confirm_frames_ = 3;         // 段完成需连续确认帧数（防抖）
   int seg0_confirm_frames_ = 8;            // Seg0 专用确认帧数（覆盖 boom 阶跃后臂架液压振荡模态）
-  double truck_top_height_m_ = 3.5;        // 卡车上表面高度阈值 (m)
   double bucket_clear_margin_m_ = 0.3;     // 铲斗需超出卡车上表面的裕量 (m)
   int bucket_clear_seg_idx_ = 0;           // 哪一段完成后触发铲斗高度门控（默认段0即WP1→WP4完成后）
   double waypoint_clamp_abort_deg_ = 5.0;  // 限位校验 clamp 修正量超过该值则终止激活 (deg)
+  double offline_seq_dt_sec_ = 0.01;       // 离线轨迹序列采样步长 (s)
 
   // 门控自动提升参数
   double gate_timeout_sec_ = 4.0;          // 门控等待超时 (s)，超时自动追加 boom 提升
   double gate_boost_boom_deg_ = 3.0;       // 每次自动提升的 boom 角度 (deg)
+  double gate_boost_tolerance_deg_ = 1.0;  // boost 完成判定容差 (deg)，必须 < gate_boost_boom_deg_，否则首帧即误判完成
   int gate_max_boost_count_ = 3;           // 最大自动提升次数，超过则终止卸载
 
   // ---- Seg0 两阶段策略参数 ----
-  double seg0_midpoint_ratio_ = 0.5;       // boom 阶跃中点比例：midpoint = WP1.boom + ratio*(WP4.boom-WP1.boom)
-  double seg0_switch_threshold_deg_ = 3.0; // boom 到达中点 ±阈值后切换到 PCHIP 过渡
-  double seg0_phase1_swing_dps_ = 15.0;    // Phase1 复合回转指令速率(deg/s)：boom 阶跃举升期间 swing 向 WP4 回转的速率（独立可调，实际受泵流量限制会滞后）
-  double seg0_min_step_factor_ = 2.0;      // 小行程退化因子：阶跃行程 < 该值×切换阈值 时退化为单段 PCHIP
+  double seg0_switch_threshold_deg_ = 3.0; // swing 到达 Phase1 目标 ±阈值(deg)后检查高度门控，通过则切 Phase2
+  double seg0_phase1_swing_dps_ = 15.0;    // Phase1 复合回转指令速率(deg/s)：boom 随动举升期间 swing 向 WP4 回转的速率（独立可调，实际受泵流量限制会滞后）
+  double seg0_min_step_factor_ = 2.0;      // 小行程退化因子：boom 抬升量 < 该值×切换阈值 时退化为单段 PCHIP
   double seg0_swing_offset_deg_ = 15.0;    // swing Phase1 阶跃偏移角(deg)：目标 = WP4.swing − 偏移（沿回转方向）
   double bucket_attitude_target_deg_ = -180.0;  // 铲斗姿态角目标（boom+arm+bucket），超过时调整 bucket
 
@@ -213,9 +242,14 @@ class DumpTrajectoryNode {
   size_t seg_frame_idx_ = 0;
 
   // ---- Seg0 两阶段状态 ----
-  bool seg0_phase1_complete_ = false;      // Phase 1(阶跃) 是否已完成，进入 Phase 2(PCHIP)
-  kinematics::JointState seg0_phase1_cmd_; // Phase 1 指令：boom=中点阶跃饱和举升, arm 保持, swing=阶跃到"卡车附近"(WP4−offset), bucket 维持姿态
-  double seg0_phase1_timeout_sec_ = 0.0;   // Phase 1 独立超时(s)=阶跃行程/wp2_vel_boom_dps×factor；超时转入高度门控 boost 重试
+  bool seg0_phase1_complete_ = false;      // Phase 1(回转+boom随动) 是否已完成，进入 Phase 2(PCHIP)
+  kinematics::JointState seg0_phase1_cmd_; // Phase 1 指令：boom=随swing进度插值抬升, arm 保持, swing=阶跃到"卡车附近"(WP4−offset), bucket 维持姿态
+  double seg0_phase1_timeout_sec_ = 0.0;   // Phase 1 独立超时(s)=行程/wp2_vel_boom_dps×factor；超时转入高度门控 boost 重试
+  // Phase1 boom 随动插值状态（progress 单调不减，超调回摆不回退指令）
+  double seg0_p1_sw_start_rad_ = 0.0;      // Phase1 swing 起点（周期展开后）
+  double seg0_p1_boom_start_rad_ = 0.0;    // boom 插值起点（=WP1.boom）
+  double seg0_p1_boom_end_rad_ = 0.0;      // boom 插值终点（=段终点航路点.boom）
+  double seg0_p1_progress_ = 0.0;          // swing 回转进度 [0,1]（单调锁定）
 
   // ---- 门控自动提升状态 ----
   ros::Time gate_start_time_;              // 进入门控（或上次提升完成）的时刻
@@ -243,7 +277,7 @@ class DumpTrajectoryNode {
   // 卡车位姿：从 /truck_center_unloadpoint 获取
   // x/y=卡车中心(base系,m)，w=RTK方位角α(deg)
   // 卸载点取卡车中心 x/y，z=0
-  // 内部存 base 系 yaw β = (180 + α) mod 360 (rad)
+  // 内部存 base 系 yaw β = (180 − α) mod 360 (rad)
   TruckPose truck_pose_;
   bool truck_pose_valid_ = false;
 

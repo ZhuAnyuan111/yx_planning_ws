@@ -38,8 +38,10 @@ LinkPoints ComputeLinkPoints(const kinematics::LinkGeometry& g,
   const double th_b = q.boom;
   const double th_a = q.boom + q.arm;
   const double th_k = q.boom + q.arm + q.bucket;
-  const double cs = std::cos(q.swing);
-  const double sn = std::sin(q.swing);
+  // 与 KinematicsSolver::swing_center_forward 同源：swing=0 时臂架指向 -x，
+  // 水平方向角 = swing - 180°（IK 约定 swing = atan2(y,x)+180 的互逆）
+  const double cs = std::cos(q.swing - kPi);
+  const double sn = std::sin(q.swing - kPi);
 
   auto make = [&](double radial, double z) {
     return Pt(cs * radial, sn * radial + g.boom_pivot_y, z);

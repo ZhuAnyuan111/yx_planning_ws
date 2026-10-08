@@ -6,6 +6,10 @@ StatusReporter::StatusReporter(ros::NodeHandle& nh) {
   pub_swing_ = nh.advertise<geometry_msgs::Point>("/Swing_topic", 1);
   pub_bucket_pos_ = nh.advertise<geometry_msgs::Point>("/RealBktPosXYZ", 1);
   // latched：后启动的订阅者也能立即读到当前状态
+  pub_unload_end_angle_ = nh.advertise<geometry_msgs::Pose>(
+      "/Sys_RUn_UnloadEndAngle", 1, true);
+  pub_unload_plan_finish_ = nh.advertise<std_msgs::Float32>(
+      "/Sys_unloadPlanFinish", 1, true);
   pub_finish_flag_ = nh.advertise<std_msgs::Float64>(
       "/Sys_RUn_FlagUnloadExcuteFinish", 1, true);
   pub_up_feasible_ = nh.advertise<std_msgs::Bool>("/UPFeasible", 1, true);
@@ -36,6 +40,30 @@ void StatusReporter::ReportFinishFlag(double value) {
   std_msgs::Float64 msg;
   msg.data = value;
   pub_finish_flag_.publish(msg);
+}
+
+void StatusReporter::ReportUnloadEndAngle(double swing_deg, double boom_deg,
+                                          double arm_deg, double bucket_deg) {
+  geometry_msgs::Pose msg;
+  // Position 保留为 0（与执行指令流的 Position.x 阶段位区分）
+  msg.position.x = 0.0;
+  msg.position.y = 0.0;
+  msg.position.z = 0.0;
+  // Orientation.x/y/z/w = swing/boom/arm/bucket（deg）
+  msg.orientation.x = swing_deg;
+  msg.orientation.y = boom_deg;
+  msg.orientation.z = arm_deg;
+  msg.orientation.w = bucket_deg;
+  pub_unload_end_angle_.publish(msg);
+  ROS_INFO("[dump_traj] unload end angle published: swing=%.2f boom=%.2f "
+           "arm=%.2f bucket=%.2f (deg)",
+           swing_deg, boom_deg, arm_deg, bucket_deg);
+}
+
+void StatusReporter::ReportUnloadPlanFinish(float value) {
+  std_msgs::Float32 msg;
+  msg.data = value;
+  pub_unload_plan_finish_.publish(msg);
 }
 
 void StatusReporter::ReportFeasible(bool reachable) {

@@ -64,8 +64,13 @@ Pose3D KinematicsSolver::swing_center_forward(const JointState& q) const {
       geometry_.arm_length * std::cos(arm_angle) +
       geometry_.bucket_tooth_length * std::cos(bucket_angle);
 
-  pose.x = std::cos(q.swing) * radial_distance;
-  pose.y = std::sin(q.swing) * radial_distance + geometry_.boom_pivot_y;
+  // swing 约定（与 swing_center_inverse 的 swing = atan2(y,x)+180 互逆）：
+  // swing=0 时臂架指向 -x（回转零位在机体后方），故水平方向角 = swing - 180°。
+  // 曾误用 cos/sin(swing) 直接当方向角，导致 FK 位置与 IK 目标相差 180°
+  // （可视化臂架画在真实位置对面，绕挖机中心镜像）。
+  const double dir_rad = q.swing - kPi;
+  pose.x = std::cos(dir_rad) * radial_distance;
+  pose.y = std::sin(dir_rad) * radial_distance + geometry_.boom_pivot_y;
   pose.z = geometry_.boom_pivot_z +
       geometry_.boom_length * std::sin(boom_angle) +
       geometry_.arm_length * std::sin(arm_angle) +
