@@ -34,3 +34,7 @@ devel/
 *.tar.gz
 build_fresh/
 devel_fresh/
+
+# 单文件编译产物与 Windows NTFS 数据流残留
+reach_sweep
+*Zone.Identifier
