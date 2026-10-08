@@ -32,3 +32,5 @@ devel/
 .qoder/
 .catkin_workspace
 *.tar.gz
+build_fresh/
+devel_fresh/
