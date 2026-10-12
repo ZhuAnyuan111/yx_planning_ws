@@ -1,0 +1,70 @@
+# exca_plant_sim 参数配置
+# 默认值与旧 exec_sim.py 一致，保证 dump_viz_sim_single_trigger.launch 向后兼容。
+# 契约见 docs/sim_arch.md §6。
+
+# ===== 主循环 =====
+publish_rate_hz: 50.0
+
+# ===== 关节速率上限 (deg/s) =====
+rate_swing_dps: 30.0
+rate_boom_dps: 15.0
+rate_arm_dps: 20.0
+rate_bucket_dps: 40.0
+
+# ===== 一阶惯性时间常数 (s) =====
+# 0 = 纯速率限制（等价旧 exec_sim 行为）
+tau_swing_s: 0.0
+tau_boom_s: 0.0
+tau_arm_s: 0.0
+tau_bucket_s: 0.0
+
+# ===== 死区 (deg) =====
+# |cmd - actual| < deadband 时不动作，避免高频抖振
+deadband_swing_deg: 0.0
+deadband_boom_deg: 0.0
+deadband_arm_deg: 0.0
+deadband_bucket_deg: 0.0
+
+# ===== 反馈噪声标准差 (deg) =====
+sigma_swing_deg: 0.0
+sigma_boom_deg: 0.0
+sigma_arm_deg: 0.0
+sigma_bucket_deg: 0.0
+
+# ===== 反馈延迟 (ms) =====
+# 环形缓冲实现；0 = 无延迟
+feedback_delay_ms: 0.0
+
+# ===== 初始位姿（挖掘终止姿态，deg）=====
+init_swing_deg: 180.0
+init_boom_deg: 5.0
+init_arm_deg: -110.0
+init_bucket_deg: -110.0
+
+# ===== 完成判定（供 /plant/settled 与 sequencer 参考）=====
+settle_tol_deg: 3.0
+settle_dur_sec: 0.5
+
+# ===== 命令源仲裁 =====
+# 数字越小优先级越高；同帧多源时按优先级取一
+cmd_priority:
+  RefDeviceTraj_Unload: 10
+  RefDeviceTraj_Reset: 20
+  RefDeviceTraj_Dig: 30
+  RefDeviceTraj_Dump: 90   # 兼容旧命名，最低优先级
+
+# ===== 故障注入（Phase 6 使用，默认全关）=====
+faults:
+  joint_stuck:
+    enabled: false
+    joint: boom        # swing / boom / arm / bucket
+    duration_sec: 0.0  # 0 = 无限，直到手动关闭
+  sensor_dropout:
+    enabled: false
+    drop_prob: 0.0     # [0, 1]
+  latency_spike:
+    enabled: false
+    extra_delay_ms: 0.0
+  cmd_freeze:
+    enabled: false
+    duration_sec: 0.0

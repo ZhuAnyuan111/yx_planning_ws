@@ -1,0 +1,107 @@
+<launch>
+  <!-- 全循环集成仿真：decision 节点编排 dig → dump → reset → level → next truck
+       使用 excavator_system_decision（C++ 生产级决策）替代 cycle_sequencer。
+
+       数据流（契约见 docs/sim_arch.md）：
+         decision → /Sys_SDi_FlagDigExcute → dig_stub
+         decision → /Sys_SeqAction=4.0 → dump_node
+         decision → /Sys_SRe_FlagResetExcute=1.0 → reset_node
+         各 planner → /RefDeviceTraj_{Dig,Unload,Reset} → exca_plant_sim（仲裁）
+         plant → /joints_angle + /heading2swing_topic → decision（闭环反馈）
+         environment_stub → /truck_pose_topic, /Mpc_Switch, /Sys_SCo_Traj 等 → decision
+         scenario_manager → 卡车位置 / 挖掘目标 → planners
+         traj_to_urdf_adapter → /Sys_RefDeviceTraj → sy200_urdf_control → /joint_states → RViz -->
+
+  <!-- ===== 开关与场景 ===== -->
+  <arg name="rviz"             default="true"/>
+  <arg name="scenario_file"    default="$(find exca200_simulink)/scenarios/baseline.yaml"/>
+  <arg name="include_truck_dump_viz" default="false"/>
+
+  <!-- ===== environment_stub 参数 ===== -->
+  <arg name="auto_start_delay"     default="2.0"/>
+  <arg name="truck_entry_delay"    default="3.0"/>
+  <arg name="truck_loading_delay"  default="2.0"/>
+  <arg name="truck_leave_delay"    default="5.0"/>
+  <arg name="truck_full_threshold" default="99"/>
+  <arg name="ground_plan_delay"    default="1.0"/>
+  <arg name="smooth_finish_delay"  default="2.0"/>
+
+  <!-- ===== Plant 参数覆盖（saturated_valve 等场景使用）===== -->
+  <arg name="rate_boom_dps"    default="15.0"/>
+  <arg name="rate_arm_dps"     default="20.0"/>
+  <arg name="rate_swing_dps"   default="30.0"/>
+  <arg name="rate_bucket_dps"  default="40.0"/>
+
+  <!-- ===== 1) 各阶段 planner ===== -->
+  <!-- 1a) 挖掘桩节点 -->
+  <node name="dig_planner_stub" pkg="exca200_simulink" type="dig_planner_stub.py" output="screen"/>
+
+  <!-- 1b) 卸载 planner -->
+  <include file="$(find dump_trajectory_planner)/launch/dump_trajectory.launch"/>
+
+  <!-- 1c) 复位 planner -->
+  <include file="$(find reset_trajectory_planner)/launch/reset_trajectory.launch"/>
+
+  <!-- 1d) 可选：truck_dump_planner 可视化叠加 -->
+  <group if="$(arg include_truck_dump_viz)">
+    <include file="$(find truck_dump_planner)/launch/dump_planner.launch">
+      <arg name="rviz" value="false"/>
+      <arg name="test" value="true"/>
+    </include>
+  </group>
+
+  <!-- ===== 2) URDF + TF + joint bridge ===== -->
+  <param name="robot_description" textfile="$(find exca200_simulink)/urdf/exca870_single.urdf"/>
+  <node name="robot_state_publisher" pkg="robot_state_publisher" type="robot_state_publisher"/>
+  <node name="sy200_urdf_control" pkg="exca200_simulink" type="sy200_urdf_control"/>
+  <node name="tf_base_link_to_base" pkg="tf" type="static_transform_publisher"
+        args="0 0 0 0 0 0 base_link base 100"/>
+
+  <!-- ===== 3) Plant（L1）：多源命令仲裁 + 一阶滞后 + 速率限幅 + 反馈 ===== -->
+  <node name="exca_plant_sim" pkg="exca200_simulink" type="exca_plant_sim.py" output="screen">
+    <param name="plant_config" value="$(find exca200_simulink)/config/plant.yaml"/>
+    <param name="rate_swing_dps"  value="$(arg rate_swing_dps)"/>
+    <param name="rate_boom_dps"   value="$(arg rate_boom_dps)"/>
+    <param name="rate_arm_dps"    value="$(arg rate_arm_dps)"/>
+    <param name="rate_bucket_dps" value="$(arg rate_bucket_dps)"/>
+  </node>
+
+  <!-- ===== 4) deg→rad adapter（L3） ===== -->
+  <node name="traj_to_urdf_adapter" pkg="exca200_simulink" type="traj_to_urdf_adapter.py" output="screen"/>
+
+  <!-- ===== 5) Scenario manager（L2）：YAML 驱动 ===== -->
+  <node name="scenario_manager" pkg="exca200_simulink" type="scenario_manager.py" output="screen">
+    <param name="scenario_file" value="$(arg scenario_file)"/>
+    <param name="auto_activate" value="false"/>
+    <!-- decision 节点自行管理 bucket_number，scenario_manager 不再发布 -->
+    <param name="publish_bucket_number" value="false"/>
+  </node>
+
+  <!-- ===== 6) Decision 节点（L4）：生产级 C++ 决策编排 ===== -->
+  <node name="excavator_system_decision" pkg="excavator_system_decision"
+        type="excavator_system_decision_node" output="screen" required="true">
+    <rosparam command="load"
+              file="$(find excavator_system_decision)/config/truck_interaction.yaml"/>
+    <!-- 仿真无 MPC 控制抬臂；降低阈值使 BOOM_UP 阶段可通过 -->
+    <param name="operation/boom_up_angle_threshold" value="3.0"/>
+    <!-- 仿真无 MPC 在 BOOM_UP 阶段把臂架回转到卡车方位；卡车与挖点分侧后
+         真实回转角与参考回转角(atan2(-y,-x) 指向卡车)差可达 ~166°，
+         放宽回转角门限（180 即恒通过）使 BOOM_UP 不被卡住，与上面 boom 阈值同理 -->
+    <param name="operation/swing_angle_error_threshold" value="180.0"/>
+  </node>
+
+  <!-- ===== 7) Environment stub：模拟外部世界信号 ===== -->
+  <node name="environment_stub" pkg="exca200_simulink" type="environment_stub.py" output="screen">
+    <param name="auto_start_delay_sec"   value="$(arg auto_start_delay)"/>
+    <param name="truck_entry_delay_sec"  value="$(arg truck_entry_delay)"/>
+    <param name="truck_loading_delay_sec" value="$(arg truck_loading_delay)"/>
+    <param name="truck_leave_delay_sec"  value="$(arg truck_leave_delay)"/>
+    <param name="truck_full_threshold"   value="$(arg truck_full_threshold)"/>
+    <param name="ground_plan_delay_sec"  value="$(arg ground_plan_delay)"/>
+    <param name="smooth_finish_delay_sec" value="$(arg smooth_finish_delay)"/>
+  </node>
+
+  <!-- ===== 8) RViz ===== -->
+  <node if="$(arg rviz)" name="rviz" pkg="rviz" type="rviz" output="screen"
+        args="-d $(find exca200_simulink)/config/rviz_single.rviz"/>
+</launch>

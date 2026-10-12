@@ -1,0 +1,44 @@
+# 基线场景：标准卡车位置、标准挖掘目标、无扰动。
+# 对应旧 scenario_pub 的默认参数，用作所有回归测试的参考基线。
+
+truck:
+  near_x: -6.0
+  near_y: 1.5
+  near_z: 0.0
+  far_x: -8.0
+  far_y: 2.0
+  heading_deg: 20.0
+
+bucket_number: 2.0
+
+gp_dig_joints:
+  swing_deg: 180.0
+  boom_deg: 5.0
+  arm_deg: -110.0
+  bucket_deg: -110.0
+
+clean_dig_joints:
+  swing_deg: 180.0
+  boom_deg: 5.0
+  arm_deg: -110.0
+  bucket_deg: -110.0
+
+bucket_terrain_z: -1.0
+
+terrain_profile:
+  points: []
+
+activations:
+  publish_rate_hz: 1.0
+  auto_activate: true
+  activate_delay_sec: 2.0
+  loop_activate: false
+  dump_activate_value: 4.0
+  reset_activate_value: 1.0
+  dig_activate_value: 3.0
+
+perturbations:
+  truck_pos_noise_sigma_m: 0.0
+  truck_heading_noise_sigma_deg: 0.0
+  rtk_bias_deg: 0.0
+  bucket_number_jitter: 0

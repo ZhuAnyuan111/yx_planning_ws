@@ -1,0 +1,77 @@
+<launch>
+  <!-- 复位阶段闭环仿真：reset_trajectory_node + plant + scenario + adapter + RViz。
+       数据流：
+         phase_trigger → /Sys_SRe_FlagResetExcute(1.0) → reset_trajectory_node
+         reset /RefDeviceTraj_Reset (deg, position.x=1 执行中/0 结束) → exca_plant_sim
+         plant /joints_angle + /heading2swing_topic + /Swing_topic → reset（闭环）
+         （/RealBktPosXYZ 由 dump planner 发布；本 standalone launch 无该话题，
+           reset 自动禁用"物理提前结束"、退回回转到位判定，功能不受影响）
+         scenario_pub → /truck_center_point + /GP_dig_joints + /bucket_terrain_delta_position + /clean_digPoint → reset
+       契约见 docs/sim_arch.md。 -->
+
+  <arg name="rviz"            default="true"/>
+  <arg name="auto_loop_sec"   default="0.0"/>
+
+  <!-- 起始位姿（复位前姿态：卸载终点附近） -->
+  <arg name="dig_swing_deg"   default="20.0"/>
+  <arg name="dig_boom_deg"    default="20.0"/>
+  <arg name="dig_arm_deg"     default="-80.0"/>
+  <arg name="dig_bucket_deg"  default="-60.0"/>
+
+  <!-- 复位目标（下一挖掘点关节角） -->
+  <arg name="gp_swing_deg"    default="180.0"/>
+  <arg name="gp_boom_deg"     default="5.0"/>
+  <arg name="gp_arm_deg"      default="-110.0"/>
+  <arg name="gp_bucket_deg"   default="-110.0"/>
+
+  <!-- 1) 复位 planner（复用其原 launch，不改动） -->
+  <include file="$(find reset_trajectory_planner)/launch/reset_trajectory.launch"/>
+
+  <!-- 2) 单机器人 URDF + TF + joint bridge -->
+  <param name="robot_description" textfile="$(find exca200_simulink)/urdf/exca870_single.urdf"/>
+  <node name="robot_state_publisher" pkg="robot_state_publisher" type="robot_state_publisher"/>
+  <node name="sy200_urdf_control" pkg="exca200_simulink" type="sy200_urdf_control"/>
+  <node name="tf_base_link_to_base" pkg="tf" type="static_transform_publisher"
+        args="0 0 0 0 0 0 base_link base 100"/>
+
+  <!-- 3) Plant（L1） -->
+  <node name="exca_plant_sim" pkg="exca200_simulink" type="exca_plant_sim.py" output="screen">
+    <param name="plant_config" value="$(find exca200_simulink)/config/plant.yaml"/>
+    <param name="init_swing_deg"  value="$(arg dig_swing_deg)"/>
+    <param name="init_boom_deg"   value="$(arg dig_boom_deg)"/>
+    <param name="init_arm_deg"    value="$(arg dig_arm_deg)"/>
+    <param name="init_bucket_deg" value="$(arg dig_bucket_deg)"/>
+  </node>
+
+  <!-- 4) deg→rad adapter -->
+  <node name="traj_to_urdf_adapter" pkg="exca200_simulink" type="traj_to_urdf_adapter.py" output="screen"/>
+
+  <!-- 5) Scenario（L2）：发布卡车点 / 挖掘目标 / 地形桩（scenario_pub 已扩展支持） -->
+  <node name="scenario_pub" pkg="exca200_simulink" type="scenario_pub.py" output="screen">
+    <param name="auto_activate" value="false"/>
+    <param name="gp_swing_deg"  value="$(arg gp_swing_deg)"/>
+    <param name="gp_boom_deg"   value="$(arg gp_boom_deg)"/>
+    <param name="gp_arm_deg"    value="$(arg gp_arm_deg)"/>
+    <param name="gp_bucket_deg" value="$(arg gp_bucket_deg)"/>
+    <!-- 搭台模式目标（本 launch 用 dig-cycle 模式，clean_* 仅作占位） -->
+    <param name="clean_swing_deg"  value="$(arg gp_swing_deg)"/>
+    <param name="clean_boom_deg"   value="$(arg gp_boom_deg)"/>
+    <param name="clean_arm_deg"    value="$(arg gp_arm_deg)"/>
+    <param name="clean_bucket_deg" value="$(arg gp_bucket_deg)"/>
+  </node>
+
+  <!-- 6) Phase trigger（L4）：复位→触发 reset→等完成（靠 position.x 下降沿） -->
+  <node name="phase_trigger" pkg="exca200_simulink" type="phase_trigger.py" output="screen">
+    <param name="phase"           value="reset"/>
+    <param name="dig_swing_deg"   value="$(arg dig_swing_deg)"/>
+    <param name="dig_boom_deg"    value="$(arg dig_boom_deg)"/>
+    <param name="dig_arm_deg"     value="$(arg dig_arm_deg)"/>
+    <param name="dig_bucket_deg"  value="$(arg dig_bucket_deg)"/>
+    <param name="auto_loop_sec"   value="$(arg auto_loop_sec)"/>
+    <param name="wait_timeout_sec" value="45.0"/>
+  </node>
+
+  <!-- 7) RViz -->
+  <node if="$(arg rviz)" name="rviz" pkg="rviz" type="rviz" output="screen"
+        args="-d $(find exca200_simulink)/config/rviz_single.rviz"/>
+</launch>

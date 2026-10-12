@@ -38,3 +38,13 @@ devel_fresh/
 # 单文件编译产物与 Windows NTFS 数据流残留
 reach_sweep
 *Zone.Identifier
+
+# Python 编译产物
+__pycache__/
+*.pyc
+
+# 调试/可视化临时目录
+.dumpviz_tmp/
+
+# 回归测试运行日志产物
+src/exca200_simulink/tests/.*_run.log

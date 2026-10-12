@@ -14,9 +14,10 @@
   <arg name="activate_delay"  default="2.0"/>
   <arg name="loop_activate"   default="false"/>
   <arg name="bucket_number"   default="2.0"/>
-  <arg name="truck_near_x"    default="6.0"/>
+  <!-- 卡车置于 -x 侧，与挖掘起始方向(+x)分开约 166°，卸载回转清晰可见 -->
+  <arg name="truck_near_x"    default="-6.0"/>
   <arg name="truck_near_y"    default="1.5"/>
-  <arg name="truck_far_x"     default="8.0"/>
+  <arg name="truck_far_x"     default="-8.0"/>
   <arg name="truck_far_y"     default="2.0"/>
   <arg name="truck_heading"   default="20.0"/>
 

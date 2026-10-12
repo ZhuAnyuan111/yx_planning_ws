@@ -1,0 +1,15 @@
+<launch>
+  <arg name="config_file"
+       default="$(find excavator_system_decision)/config/truck_interaction.yaml" />
+
+  <node pkg="excavator_system_decision"
+        type="excavator_system_decision_node"
+        name="excavator_system_decision"
+        output="screen"
+        required="true">
+    <rosparam command="load" file="$(arg config_file)" />
+  </node>
+
+  <include file="$(find robot_logger)/launch/robot_logger.launch" />
+
+</launch>

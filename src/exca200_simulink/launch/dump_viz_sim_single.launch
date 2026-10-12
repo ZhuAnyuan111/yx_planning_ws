@@ -1,0 +1,74 @@
+<launch>
+  <!-- Unload trajectory planner - SINGLE excavator URDF visualization + planner dump_viz/* overlay.
+       Differences from dump_viz_sim.launch (dual-robot version, left untouched):
+         * robot_description -> exca870_single.urdf (robot1 only, no y=-15 comparison robot)
+         * RViz config rviz_single.rviz also mounts the 5 planner topics:
+             /dump_viz/{truck,excavator,plan,segment,status}
+         * a static TF base_link -> base is published so planner markers (frame_id=base)
+           render in the same fixed frame (base_link) as the robot model.
+       Data flow (closed loop) unchanged:
+         scenario_pub => (truck points / bucket number / activation) => dump_trajectory_node
+         dump_trajectory_node /RefDeviceTraj_Dump (deg) => exec_sim
+         exec_sim /joints_angle + /heading2swing_topic (deg, actual) => dump_trajectory_node
+         traj_to_urdf_adapter: actual deg=>rad => /Sys_RefDeviceTraj => sy200_urdf_control
+         sy200_urdf_control /joint_states (rad) => robot_state_publisher => /tf => RViz -->
+
+  <!-- Visualization / sim switches and scenario parameters (override via CLI) -->
+  <arg name="rviz"            default="true"/>
+  <arg name="auto_activate"   default="true"/>
+  <arg name="activate_delay"  default="2.0"/>
+  <arg name="loop_activate"   default="false"/>
+  <arg name="bucket_number"   default="2.0"/>
+  <!-- 卡车置于 -x 侧，与挖掘起始方向(+x)分开约 166°，卸载回转清晰可见 -->
+  <arg name="truck_near_x"    default="-6.0"/>
+  <arg name="truck_near_y"    default="1.5"/>
+  <arg name="truck_far_x"     default="-8.0"/>
+  <arg name="truck_far_y"     default="2.0"/>
+  <arg name="truck_heading"   default="20.0"/>
+
+  <!-- Executor simulator rate limits (deg/s) -->
+  <arg name="rate_swing_dps"  default="30.0"/>
+  <arg name="rate_boom_dps"   default="15.0"/>
+  <arg name="rate_arm_dps"    default="20.0"/>
+  <arg name="rate_bucket_dps" default="40.0"/>
+
+  <!-- 1) Unload planner (reuse its original launch, unmodified) -->
+  <include file="$(find dump_trajectory_planner)/launch/dump_trajectory.launch"/>
+
+  <!-- 2) SINGLE URDF model + TF publisher + joint bridge -->
+  <param name="robot_description" textfile="$(find exca200_simulink)/urdf/exca870_single.urdf"/>
+  <node name="robot_state_publisher" pkg="robot_state_publisher" type="robot_state_publisher"/>
+  <node name="sy200_urdf_control" pkg="exca200_simulink" type="sy200_urdf_control"/>
+
+  <!-- 2b) Static TF so planner markers (frame_id=base) align with robot (base_link) -->
+  <node name="tf_base_link_to_base" pkg="tf" type="static_transform_publisher"
+        args="0 0 0 0 0 0 base_link base 100"/>
+
+  <!-- 3) Closed-loop executor sim: cmd => rate limit => actual joint feedback -->
+  <node name="exec_sim" pkg="exca200_simulink" type="exec_sim.py" output="screen">
+    <param name="rate_swing_dps"  value="$(arg rate_swing_dps)"/>
+    <param name="rate_boom_dps"   value="$(arg rate_boom_dps)"/>
+    <param name="rate_arm_dps"    value="$(arg rate_arm_dps)"/>
+    <param name="rate_bucket_dps" value="$(arg rate_bucket_dps)"/>
+  </node>
+
+  <!-- 4) deg=>rad adapter: robot1=actual feedback drives the single model -->
+  <node name="traj_to_urdf_adapter" pkg="exca200_simulink" type="traj_to_urdf_adapter.py" output="screen"/>
+
+  <!-- 5) Scenario inputs: truck near/far point, bucket number, activation -->
+  <node name="scenario_pub" pkg="exca200_simulink" type="scenario_pub.py" output="screen">
+    <param name="truck_near_x"   value="$(arg truck_near_x)"/>
+    <param name="truck_near_y"   value="$(arg truck_near_y)"/>
+    <param name="truck_far_x"    value="$(arg truck_far_x)"/>
+    <param name="truck_far_y"    value="$(arg truck_far_y)"/>
+    <param name="truck_heading_deg" value="$(arg truck_heading)"/>
+    <param name="bucket_number"  value="$(arg bucket_number)"/>
+    <param name="auto_activate"  value="$(arg auto_activate)"/>
+    <param name="activate_delay" value="$(arg activate_delay)"/>
+    <param name="loop_activate"  value="$(arg loop_activate)"/>
+  </node>
+
+  <!-- 6) RViz (RobotModel single + Grid + dump_viz/* Marker overlays, Fixed Frame = base_link) -->
+  <node if="$(arg rviz)" name="rviz" pkg="rviz" type="rviz" output="screen"
+        args="-d $(find exca200_simulink)/config/rviz_single.rviz"/>
+</launch>

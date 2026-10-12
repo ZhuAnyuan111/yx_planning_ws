@@ -1,0 +1,53 @@
+# 阀口饱和场景：boom 速率上限压到 8 dps（默认 15），模拟下游限速器 / 阀口饱和。
+# 考验 dump 规划器 Seg0 Phase1 的"双阶跃 + PCHIP"策略在执行端饱和时的门控行为。
+# 注意：本场景通过 plant 的 ~rate_boom_dps 私有参数生效，scenario_manager 本身不改 plant；
+# 在 launch 中需同时设置：
+#   <param name="rate_boom_dps" value="8.0"/>  到 exca_plant_sim 节点。
+# 本 YAML 仅记录场景意图与对应的 plant 参数覆盖值，供 run_batch.py 读取后注入。
+
+truck:
+  near_x: -6.0
+  near_y: 1.5
+  near_z: 0.0
+  far_x: -8.0
+  far_y: 2.0
+  heading_deg: 20.0
+
+bucket_number: 2.0
+
+gp_dig_joints:
+  swing_deg: 180.0
+  boom_deg: 5.0
+  arm_deg: -110.0
+  bucket_deg: -110.0
+
+clean_dig_joints:
+  swing_deg: 180.0
+  boom_deg: 5.0
+  arm_deg: -110.0
+  bucket_deg: -110.0
+
+bucket_terrain_z: -1.0
+
+terrain_profile:
+  points: []
+
+activations:
+  publish_rate_hz: 1.0
+  auto_activate: true
+  activate_delay_sec: 2.0
+  loop_activate: false
+  dump_activate_value: 4.0
+  reset_activate_value: 1.0
+  dig_activate_value: 3.0
+
+perturbations:
+  truck_pos_noise_sigma_m: 0.0
+  truck_heading_noise_sigma_deg: 0.0
+  rtk_bias_deg: 0.0
+  bucket_number_jitter: 0
+
+# plant 参数覆盖（run_batch.py 读取后注入到 exca_plant_sim 节点）
+plant_overrides:
+  rate_boom_dps: 8.0
+  rate_arm_dps: 12.0

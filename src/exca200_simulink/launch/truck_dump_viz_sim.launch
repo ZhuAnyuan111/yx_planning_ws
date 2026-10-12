@@ -1,0 +1,51 @@
+<launch>
+  <!-- truck_dump_planner 可视化叠加仿真。
+       注意：truck_dump_planner 只发布 marker（truck_envelope_markers / trajectory_markers /
+       planner_feedback），**不发布设备指令**，因此本 launch 不构成闭环控制，
+       仅提供"静态挖掘机模型 + 规划器 marker 叠加"的可视化环境。
+       若将来该 planner 增加 /RefDeviceTraj_* 输出，plant 会自动接入（cmd_priority 已预留）。
+
+       数据流：
+         plant（保持初始位姿或接受外部命令）→ /joints_angle + /Swing_topic → truck_dump_planner
+         truck_dump_planner → truck_envelope_markers + trajectory_markers → RViz
+         traj_to_urdf_adapter → /Sys_RefDeviceTraj → sy200_urdf_control → /joint_states → RViz
+       契约见 docs/sim_arch.md。 -->
+
+  <arg name="rviz"            default="true"/>
+  <arg name="test_truck"      default="true"/>
+
+  <!-- 起始位姿（默认挖掘姿态，静止展示） -->
+  <arg name="init_swing_deg"  default="180.0"/>
+  <arg name="init_boom_deg"   default="5.0"/>
+  <arg name="init_arm_deg"    default="-110.0"/>
+  <arg name="init_bucket_deg" default="-110.0"/>
+
+  <!-- 1) truck_dump_planner（复用其原 launch） -->
+  <include file="$(find truck_dump_planner)/launch/dump_planner.launch">
+    <arg name="rviz" value="false"/>   <!-- 由本 launch 统一启动 RViz -->
+    <arg name="test" value="$(arg test_truck)"/>
+  </include>
+
+  <!-- 2) 单机器人 URDF + TF + joint bridge -->
+  <param name="robot_description" textfile="$(find exca200_simulink)/urdf/exca870_single.urdf"/>
+  <node name="robot_state_publisher" pkg="robot_state_publisher" type="robot_state_publisher"/>
+  <node name="sy200_urdf_control" pkg="exca200_simulink" type="sy200_urdf_control"/>
+  <node name="tf_base_link_to_base" pkg="tf" type="static_transform_publisher"
+        args="0 0 0 0 0 0 base_link base 100"/>
+
+  <!-- 3) Plant（L1）：保持初始位姿，发布 /joints_angle + /Swing_topic 供 truck_dump 消费 -->
+  <node name="exca_plant_sim" pkg="exca200_simulink" type="exca_plant_sim.py" output="screen">
+    <param name="plant_config" value="$(find exca200_simulink)/config/plant.yaml"/>
+    <param name="init_swing_deg"  value="$(arg init_swing_deg)"/>
+    <param name="init_boom_deg"   value="$(arg init_boom_deg)"/>
+    <param name="init_arm_deg"    value="$(arg init_arm_deg)"/>
+    <param name="init_bucket_deg" value="$(arg init_bucket_deg)"/>
+  </node>
+
+  <!-- 4) deg→rad adapter -->
+  <node name="traj_to_urdf_adapter" pkg="exca200_simulink" type="traj_to_urdf_adapter.py" output="screen"/>
+
+  <!-- 5) RViz（使用 truck_dump_planner 的预设布局，含 marker 显示） -->
+  <node if="$(arg rviz)" name="rviz" pkg="rviz" type="rviz" output="screen"
+        args="-d $(find truck_dump_planner)/rviz/dump_planner.rviz"/>
+</launch>

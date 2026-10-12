@@ -37,7 +37,7 @@ waypoint:
 
   # WP4 铰接点相对卡车表面的高度偏置 (m)
   # 铰接点目标高度 = (truck_center_z - truck_height_offset) + wp4_height_bias
-  wp4_height_bias: 1.5
+  wp4_height_bias: 3.0
 
   # 卡车框高度偏移 (m)：卡车框高度 = truck_center_z - truck_height_offset
   truck_height_offset: 0.5

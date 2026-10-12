@@ -1,0 +1,1 @@
+# 度量输出目录：kpi_collector 与 run_batch 会在此写入 run_<ts>.csv / batch_<ts>/summary.md

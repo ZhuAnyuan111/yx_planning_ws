@@ -146,16 +146,21 @@ void DumpVisualizer::PublishTruckScene(const TruckPose& truck,
     arr.markers.push_back(m);
   }
 
-  // ---- 航向箭头（中心 → 前方 0.6L）----
+  // ---- 航向箭头（中心 → 车头方向 0.6L）----
+  // 车头朝向与 truck_dump_planner(north_west 约定) 对齐：forward = (-cosβ, -sinβ)。
+  // 本节点 β=(180-α) 直接取 (cosβ,sinβ) 时与其恰差 180°（base +x=南 vs +x=北）。
+  // 车厢线框对 180° 翻转对称、不受影响，故此处仅翻转箭头指向；卸载点/航路点计算不变。
   {
     auto m = MakeBase("truck_heading", 1, visualization_msgs::Marker::ARROW);
     SetColor(m, 1.0, 0.9, 0.1);  // 黄色
     m.scale.x = 0.12;  // 杆径
     m.scale.y = 0.28;  // 头宽
     m.scale.z = 0.28;
+    const double head_fx = -std::cos(truck.yaw_rad);
+    const double head_fy = -std::sin(truck.yaw_rad);
     m.points.push_back(Pt(truck.center_x, truck.center_y, truck_top_z));
-    m.points.push_back(Pt(truck.center_x + 0.6 * box_length * std::cos(truck.yaw_rad),
-                          truck.center_y + 0.6 * box_length * std::sin(truck.yaw_rad),
+    m.points.push_back(Pt(truck.center_x + 0.6 * box_length * head_fx,
+                          truck.center_y + 0.6 * box_length * head_fy,
                           truck_top_z));
     arr.markers.push_back(m);
   }

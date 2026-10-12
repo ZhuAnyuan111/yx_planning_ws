@@ -1,0 +1,6 @@
+<launch>
+  <node pkg="excavator_system_decision"
+        type="decision_test_gui.py"
+        name="decision_test_gui"
+        output="screen" />
+</launch>

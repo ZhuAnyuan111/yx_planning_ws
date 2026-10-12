@@ -34,6 +34,11 @@ class TrajToUrdfAdapter:
             'arm': rospy.get_param('~sign_arm', 1.0),
             'bucket': rospy.get_param('~sign_bucket', 1.0),
         }
+        # URDF mesh 的 swing 零点偏置（deg）：
+        # 运动学 FK 约定 swing=0 时臂架指向 -x（dir = swing - 180），而 URDF boom
+        # 沿 +x 伸展（swing_joint=0 时指向 +x），两者相差 180°。默认补偿 180° 使
+        # URDF 模型与 dump_viz/规划器 marker（base 系 FK）对齐；置 0 则退回旧行为。
+        self.swing_offset_deg = rospy.get_param('~swing_offset_deg', 180.0)
         # 实际反馈（robot1）
         self.fb = {'swing': 0.0, 'boom': 0.0, 'arm': 0.0, 'bucket': 0.0}
         # 规划指令（robot2）
@@ -49,9 +54,9 @@ class TrajToUrdfAdapter:
         rate = rospy.get_param('~publish_rate', 20.0)
         rospy.Timer(rospy.Duration(1.0 / rate), self.publish)
         rospy.loginfo("[traj_adapter] ready: robot1=actual feedback, robot2=planned command, "
-                      "sign sw/bm/arm/bkt=%.0f/%.0f/%.0f/%.0f",
+                      "sign sw/bm/arm/bkt=%.0f/%.0f/%.0f/%.0f, swing_offset=%.0f deg",
                       self.sign['swing'], self.sign['boom'],
-                      self.sign['arm'], self.sign['bucket'])
+                      self.sign['arm'], self.sign['bucket'], self.swing_offset_deg)
 
     def fb_joints_cb(self, msg):
         # x/y/z = boom/arm/bucket (deg)
@@ -71,7 +76,7 @@ class TrajToUrdfAdapter:
 
     def _to_pose(self, src):
         p = Pose()
-        p.orientation.x = self.sign['swing'] * src['swing'] * D2R
+        p.orientation.x = self.sign['swing'] * (src['swing'] + self.swing_offset_deg) * D2R
         p.orientation.y = self.sign['boom'] * src['boom'] * D2R
         p.orientation.z = self.sign['arm'] * src['arm'] * D2R
         p.orientation.w = self.sign['bucket'] * src['bucket'] * D2R

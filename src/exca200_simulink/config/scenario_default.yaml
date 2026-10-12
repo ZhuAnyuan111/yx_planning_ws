@@ -1,0 +1,55 @@
+# scenario_manager 默认场景配置
+# 默认值与旧 scenario_pub.py 一致，保证 dump_viz_sim_single_trigger.launch 向后兼容。
+# 契约见 docs/sim_arch.md §3.4。
+
+# ===== 卡车（卸载点）=====
+# 置于 -x 侧，与挖掘起始方向(+x)分开约 166°，卸载回转清晰可见
+truck:
+  near_x: -6.0
+  near_y: 1.5
+  near_z: 0.0
+  far_x: -8.0
+  far_y: 2.0
+  heading_deg: 20.0
+
+# ===== 装载斗数 =====
+bucket_number: 2.0
+
+# ===== 下一挖掘点关节角目标（供 reset planner 消费 /GP_dig_joints）=====
+gp_dig_joints:
+  swing_deg: 180.0
+  boom_deg: 5.0
+  arm_deg: -110.0
+  bucket_deg: -110.0
+
+# ===== 搭台模式目标关节角（供 reset planner 消费 /clean_digPoint）=====
+clean_dig_joints:
+  swing_deg: 180.0
+  boom_deg: 5.0
+  arm_deg: -110.0
+  bucket_deg: -110.0
+
+# ===== 地形高度桩（供 reset planner 消费 /bucket_terrain_delta_position）=====
+bucket_terrain_z: -1.0
+
+# ===== 地形剖面（供 dig stub 消费 /terrain_profile）=====
+terrain_profile:
+  # (x, z) 序列，base 系，单位 m；空数组表示平坦地形
+  points: []
+
+# ===== 激活策略 =====
+activations:
+  publish_rate_hz: 1.0
+  auto_activate: true          # true = 延时后自动触发一次（旧行为）
+  activate_delay_sec: 2.0
+  loop_activate: false         # true = 完成后自动重触发
+  dump_activate_value: 4.0     # /Sys_SeqAction
+  reset_activate_value: 1.0    # /Sys_SRe_FlagResetExcute (1=dig-cycle, 2=bench, 0=exit)
+  dig_activate_value: 3.0      # /Sys_SeqAction_Dig
+
+# ===== 扰动（Phase 3 引入，默认全关）=====
+perturbations:
+  truck_pos_noise_sigma_m: 0.0    # 卡车位置高斯抖动
+  truck_heading_noise_sigma_deg: 0.0
+  rtk_bias_deg: 0.0               # RTK 常值偏置
+  bucket_number_jitter: 0         # 装载斗数随机 ±N

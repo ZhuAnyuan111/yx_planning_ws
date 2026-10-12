@@ -1,0 +1,34 @@
+update_rate_hz: 10.0
+
+thresholds:
+  bucket_numbers_threshold_low: 1
+  bucket_numbers_threshold_high: 1
+
+timing:
+  truck_event_stale_sec: 2.0
+
+truck_events:
+  request_entry: 1.0
+  entering: 2.0
+  loading: 3.0
+  leave_confirmed: 4.0
+  
+  working_command: 1.0
+  permit_entry_command: 2.0
+  request_loading_command: 3.0
+  request_leave_command: 4.0
+
+operation:
+  boom_up_angle_threshold: 33.0
+  # LEVEL_TRUCK 等待整平完成的最长时间，超时后跳过整平并继续流程（秒）。
+  level_truck_timeout_sec: 15.0
+  # BOOM_UP_PLAN 回转参考角与真实回转角的最大允许环绕误差（度）。
+  swing_angle_error_threshold: 20.0
+  # INITIAL_WAIT_TRUCK_ENTRY 中，真实回转角与 /truck_center_unloadpoint 角度的最大允许误差（度）。
+  truck_center_angle_error_threshold: 30.0
+
+takeover:
+  # 接管模块独立于FSM阶段，在主节点内部按规则表监控seq_action持续时间。
+  seq_action_tolerance: 0.000001
+  reset_execute_timeout_sec: 1200000.0
+  hold_sec: 10.0

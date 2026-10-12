@@ -1,0 +1,93 @@
+<launch>
+  <!-- Single-excavator dump visualization + "multi-trigger" helper.
+       Same nodes as dump_viz_sim_single.launch, except:
+         * scenario_pub auto_activate:=false  (它不再自动/循环发 4.0，避免和触发器抢)
+         * 新增 dump_trigger：手动/循环“复位→触发→等完成”，一次启动可反复跑完整卸载。
+       跑完一轮后，再次触发：
+         rostopic pub -1 /dump_trigger/go std_msgs/Empty
+       或设 auto_loop_sec>0 自动每隔若干秒循环一轮。 -->
+
+  <arg name="rviz"            default="true"/>
+  <!-- scenario (truck pose / bucket) -->
+  <arg name="bucket_number"   default="2.0"/>
+  <!-- 卡车置于 -x 侧，与挖掘起始方向(+x)分开约 166°，卸载回转清晰可见 -->
+  <arg name="truck_near_x"    default="-6.0"/>
+  <arg name="truck_near_y"    default="1.5"/>
+  <arg name="truck_far_x"     default="-8.0"/>
+  <arg name="truck_far_y"     default="2.0"/>
+  <arg name="truck_heading"   default="20.0"/>
+  <!-- executor rate limits -->
+  <arg name="rate_swing_dps"  default="30.0"/>
+  <arg name="rate_boom_dps"   default="15.0"/>
+  <arg name="rate_arm_dps"    default="20.0"/>
+  <arg name="rate_bucket_dps" default="40.0"/>
+  <!-- executor first-order lag (s); 0 = pure rate limit. 用于 Phase1/6 注入滞后做回归 -->
+  <arg name="tau_swing_s"     default="0.0"/>
+  <arg name="tau_boom_s"      default="0.0"/>
+  <arg name="tau_arm_s"       default="0.0"/>
+  <arg name="tau_bucket_s"    default="0.0"/>
+  <!-- trigger: 0=手动一次性(rostopic pub)，>0=自动循环秒数 -->
+  <arg name="auto_loop_sec"   default="0.0"/>
+  <!-- URDF mesh 的 swing 零点偏置：URDF boom 沿 +x，FK 约定 swing=0 指向 -x，
+       故默认 180 让 mesh 与规划器 marker 对齐（置 0 会重新出现 180° 反向） -->
+  <arg name="swing_offset_deg" default="180.0"/>
+  <arg name="dig_swing_deg"   default="180.0"/>
+  <arg name="dig_boom_deg"    default="5.0"/>
+  <arg name="dig_arm_deg"     default="-110.0"/>
+  <arg name="dig_bucket_deg"  default="-110.0"/>
+
+  <!-- 1) Unload planner -->
+  <include file="$(find dump_trajectory_planner)/launch/dump_trajectory.launch"/>
+
+  <!-- 2) SINGLE URDF + TF bridge + joint bridge -->
+  <param name="robot_description" textfile="$(find exca200_simulink)/urdf/exca870_single.urdf"/>
+  <node name="robot_state_publisher" pkg="robot_state_publisher" type="robot_state_publisher"/>
+  <node name="sy200_urdf_control" pkg="exca200_simulink" type="sy200_urdf_control"/>
+  <node name="tf_base_link_to_base" pkg="tf" type="static_transform_publisher"
+        args="0 0 0 0 0 0 base_link base 100"/>
+
+  <!-- 3) Closed-loop executor sim (init pose = dig pose) -->
+  <node name="exec_sim" pkg="exca200_simulink" type="exec_sim.py" output="screen">
+    <param name="rate_swing_dps"  value="$(arg rate_swing_dps)"/>
+    <param name="rate_boom_dps"   value="$(arg rate_boom_dps)"/>
+    <param name="rate_arm_dps"    value="$(arg rate_arm_dps)"/>
+    <param name="rate_bucket_dps" value="$(arg rate_bucket_dps)"/>
+    <param name="tau_swing_s"     value="$(arg tau_swing_s)"/>
+    <param name="tau_boom_s"      value="$(arg tau_boom_s)"/>
+    <param name="tau_arm_s"       value="$(arg tau_arm_s)"/>
+    <param name="tau_bucket_s"    value="$(arg tau_bucket_s)"/>
+    <param name="init_swing_deg"  value="$(arg dig_swing_deg)"/>
+    <param name="init_boom_deg"   value="$(arg dig_boom_deg)"/>
+    <param name="init_arm_deg"    value="$(arg dig_arm_deg)"/>
+    <param name="init_bucket_deg" value="$(arg dig_bucket_deg)"/>
+  </node>
+
+  <!-- 4) deg=>rad adapter (robot1 = actual feedback) -->
+  <node name="traj_to_urdf_adapter" pkg="exca200_simulink" type="traj_to_urdf_adapter.py" output="screen">
+    <param name="swing_offset_deg" value="$(arg swing_offset_deg)"/>
+  </node>
+
+  <!-- 5) Scenario inputs: 关闭自动激活，交给 dump_trigger -->
+  <node name="scenario_pub" pkg="exca200_simulink" type="scenario_pub.py" output="screen">
+    <param name="truck_near_x"   value="$(arg truck_near_x)"/>
+    <param name="truck_near_y"   value="$(arg truck_near_y)"/>
+    <param name="truck_far_x"    value="$(arg truck_far_x)"/>
+    <param name="truck_far_y"    value="$(arg truck_far_y)"/>
+    <param name="truck_heading_deg" value="$(arg truck_heading)"/>
+    <param name="bucket_number"  value="$(arg bucket_number)"/>
+    <param name="auto_activate"  value="false"/>
+  </node>
+
+  <!-- 6) 多次触发助手：复位→触发→等完成 -->
+  <node name="dump_trigger" pkg="exca200_simulink" type="dump_trigger.py" output="screen">
+    <param name="dig_swing_deg"   value="$(arg dig_swing_deg)"/>
+    <param name="dig_boom_deg"    value="$(arg dig_boom_deg)"/>
+    <param name="dig_arm_deg"     value="$(arg dig_arm_deg)"/>
+    <param name="dig_bucket_deg"  value="$(arg dig_bucket_deg)"/>
+    <param name="auto_loop_sec"   value="$(arg auto_loop_sec)"/>
+  </node>
+
+  <!-- 7) RViz -->
+  <node if="$(arg rviz)" name="rviz" pkg="rviz" type="rviz" output="screen"
+        args="-d $(find exca200_simulink)/config/rviz_single.rviz"/>
+</launch>

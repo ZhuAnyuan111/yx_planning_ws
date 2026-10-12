@@ -1,0 +1,64 @@
+<launch>
+  <!-- 挖掘阶段（桩节点）闭环仿真：dig_planner_stub + plant + scenario + adapter + RViz。
+       数据流：
+         phase_trigger → /Sys_SDi_FlagDigExcute(1.0) → dig_planner_stub
+         dig_planner_stub /RefDeviceTraj_Dig (deg) → exca_plant_sim
+         plant /joints_angle + /heading2swing_topic → dig_planner_stub（闭环）
+         traj_to_urdf_adapter: actual deg→rad → /Sys_RefDeviceTraj → sy200_urdf_control → /joint_states → RViz
+       契约见 docs/sim_arch.md。 -->
+
+  <arg name="rviz"            default="true"/>
+  <arg name="auto_activate"   default="false"/>
+  <arg name="activate_delay"  default="2.0"/>
+  <arg name="loop_activate"   default="false"/>
+  <arg name="auto_loop_sec"   default="0.0"/>
+
+  <!-- 起始位姿（挖掘起始姿态） -->
+  <arg name="dig_swing_deg"   default="180.0"/>
+  <arg name="dig_boom_deg"    default="5.0"/>
+  <arg name="dig_arm_deg"     default="-110.0"/>
+  <arg name="dig_bucket_deg"  default="-110.0"/>
+
+  <!-- 1) 挖掘桩节点 -->
+  <node name="dig_planner_stub" pkg="exca200_simulink" type="dig_planner_stub.py" output="screen"/>
+
+  <!-- 2) 单机器人 URDF + TF + joint bridge -->
+  <param name="robot_description" textfile="$(find exca200_simulink)/urdf/exca870_single.urdf"/>
+  <node name="robot_state_publisher" pkg="robot_state_publisher" type="robot_state_publisher"/>
+  <node name="sy200_urdf_control" pkg="exca200_simulink" type="sy200_urdf_control"/>
+  <node name="tf_base_link_to_base" pkg="tf" type="static_transform_publisher"
+        args="0 0 0 0 0 0 base_link base 100"/>
+
+  <!-- 3) Plant（L1）：加载 config/plant.yaml，初始位姿=挖掘起始 -->
+  <node name="exca_plant_sim" pkg="exca200_simulink" type="exca_plant_sim.py" output="screen">
+    <param name="plant_config" value="$(find exca200_simulink)/config/plant.yaml"/>
+    <param name="init_swing_deg"  value="$(arg dig_swing_deg)"/>
+    <param name="init_boom_deg"   value="$(arg dig_boom_deg)"/>
+    <param name="init_arm_deg"    value="$(arg dig_arm_deg)"/>
+    <param name="init_bucket_deg" value="$(arg dig_bucket_deg)"/>
+  </node>
+
+  <!-- 4) deg→rad adapter（robot1 = 实际反馈驱动 URDF） -->
+  <node name="traj_to_urdf_adapter" pkg="exca200_simulink" type="traj_to_urdf_adapter.py" output="screen"/>
+
+  <!-- 5) Scenario（L2）：关闭 dump 自动激活，本 launch 只跑 dig -->
+  <node name="scenario_pub" pkg="exca200_simulink" type="scenario_pub.py" output="screen">
+    <param name="auto_activate"  value="$(arg auto_activate)"/>
+    <param name="activate_delay" value="$(arg activate_delay)"/>
+    <param name="loop_activate"  value="$(arg loop_activate)"/>
+  </node>
+
+  <!-- 6) Phase trigger（L4）：复位→触发 dig→等完成 -->
+  <node name="phase_trigger" pkg="exca200_simulink" type="phase_trigger.py" output="screen">
+    <param name="phase"           value="dig"/>
+    <param name="dig_swing_deg"   value="$(arg dig_swing_deg)"/>
+    <param name="dig_boom_deg"    value="$(arg dig_boom_deg)"/>
+    <param name="dig_arm_deg"     value="$(arg dig_arm_deg)"/>
+    <param name="dig_bucket_deg"  value="$(arg dig_bucket_deg)"/>
+    <param name="auto_loop_sec"   value="$(arg auto_loop_sec)"/>
+  </node>
+
+  <!-- 7) RViz -->
+  <node if="$(arg rviz)" name="rviz" pkg="rviz" type="rviz" output="screen"
+        args="-d $(find exca200_simulink)/config/rviz_single.rviz"/>
+</launch>
