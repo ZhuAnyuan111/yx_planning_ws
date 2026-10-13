@@ -47,6 +47,7 @@ catkin_install_python(PROGRAMS
   scripts/dig_planner_stub.py
   scripts/cycle_sequencer.py
   scripts/kpi_collector.py
+  scripts/flow_hud.py
   scripts/run_batch.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
 

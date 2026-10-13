@@ -126,6 +126,14 @@ Visualization Manager:
       Value: true
     - Class: rviz/MarkerArray
       Enabled: true
+      Marker Topic: /dump_viz/debug
+      Name: Debug(entry-circle)
+      Namespaces:
+        {}
+      Queue Size: 100
+      Value: true
+    - Class: rviz/MarkerArray
+      Enabled: true
       Marker Topic: /dump_viz/candidates
       Name: Candidates(unload pts)
       Namespaces:
@@ -144,6 +152,14 @@ Visualization Manager:
       Enabled: true
       Marker Topic: /dump_viz/status
       Name: Status(text)
+      Namespaces:
+        {}
+      Queue Size: 100
+      Value: true
+    - Class: rviz/MarkerArray
+      Enabled: true
+      Marker Topic: /decision_hud
+      Name: FlowHUD(decision FSM)
       Namespaces:
         {}
       Queue Size: 100

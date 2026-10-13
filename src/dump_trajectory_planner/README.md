@@ -108,7 +108,7 @@
 
 **WP1 起点（挖掘终止点）**
 - swing/boom/arm 直接取实时反馈 `current_joint_`（终点锚定思想：起点取实时值）；
-- bucket 姿态修正：若 `boom+arm+bucket ≥ attitude_angle_deg(-180°)` → `bucket = attitude − boom − arm`，并 clamp 到 `bucket_limit[-170, 30]`；否则保持原值；
+- bucket 姿态修正：若 `boom+arm+bucket ≥ bucket_attitude_target_deg(-180°)` → `bucket = attitude − boom − arm`，并 clamp 到 `bucket_limit[-170, 30]`；否则保持原值；
 - 切线=0（端点起停静止），`t=0`。
 
 **WP2 厢上过渡点 / 入厢点**
@@ -118,19 +118,19 @@
 - bucket：`AdjustBucketByAttitude(bo, ar, bk1(WP1 的 bucket), attitude, limits)`，基于 WP1 bucket 保持卷收连续；
 - swing 展开：`sw2 = sw1 + SignedShortestDiff(sw1, sw_ik)`（与 WP1 差 ≤180°）；
 - **切线=0**（门控停止点 `bucket_clear_seg_idx_+1`）→ 到 WP2 速度归零，等待铲斗高度门控；
-- Seg0 时长 = `max(|Δboom|/wp2_vel_boom_dps, |Δswing|/wp4_vel_swing_dps)`；执行走 Seg0 两阶段策略（非纯插值）。
+- Seg0 时长 = `max(|Δboom|/seg0_boom_vel_dps, |Δswing|/swing_vel_dps)`；执行走 Seg0 两阶段策略（非纯插值）。
 
 **WP3 卸载过渡点 / swing 到位点**
 - swing = 卸载方位（相对 WP2 展开）→ 回转已到位；
 - boom/arm = `p5_boom_cof/p5_arm_cof(0.5)·WP2 + (1−cof)·unload` 中点混合；
 - bucket = 姿态修正（基于 WP2 bucket），且 `bk3 = max(bk3, bk2)` **防铲斗倒退/张斗**；
 - 切线 = Catmull-Rom 内部点（非 0，平滑通过）；
-- Seg1 时长 = `max(|Δswing|/wp4_vel_swing_dps, |Δboom|/wp5_vel_boom_dps, |Δarm|/wp5_vel_arm_dps)`。
+- Seg1 时长 = `max(|Δswing|/swing_vel_dps, |Δboom|/unload_boom_vel_dps, |Δarm|/unload_arm_vel_dps)`。
 
 **WP4 终点（卸载点）**
 - 完整取 `unload_joint`（`CheckReachable` 的 IK 解），swing 用展开值；
 - 切线=0（端点停止）；
-- Seg2 时长 = `max(|Δbucket|/wp5_vel_bkt_dps, |Δboom|/wp5_vel_boom_dps, |Δarm|/wp5_vel_arm_dps)`。
+- Seg2 时长 = `max(|Δbucket|/unload_bucket_vel_dps, |Δboom|/unload_boom_vel_dps, |Δarm|/unload_arm_vel_dps)`。
 
 ### 公共后处理
 
@@ -180,10 +180,14 @@ h₀₁(s) = -2s³ + 3s²           h₁₁(s) = s³ - s²
 
 1. **回转圆**：以回转中心 O=(0,0) 为圆心，半径 `R = wp4_R_coff · |dig_end| + (1 - wp4_R_coff) · |unload_point|`；
 2. **矩形变换**：卡车位姿 `(center, β)` 给定一个矩形厢，将回转圆变换到厢本地坐标系；
-3. **圆-矩形交点**：对矩形 4 条边分别求交点（最多 8 个）；
-4. **选交点**：`rot_dir` 由 `dig_end swing → unload swing` 的最短路径自动判定；取沿 `rot_dir` 方向从 `dig_end swing` 出发角度差最小的交点作为 `p_entry`；
-5. **fallback**：无交点时，以矩形 4 条边上距离 O 最近的点为方向，在回转圆上取对应圆上投影作为 `p_entry`；
-6. **退化**：`R < 1e-6` 或方向量归零时，回退到卸载点 xy。
+3. **铲斗宽度外扩（配置空间 / Minkowski 膨胀）**：把卡车框每边**向外膨胀** `outset = 0.5·bucket_width + bucket_wall_clearance`，等价于将有宽度的铲斗退化为其宽度中心线（回转圆上的铰接点）、障碍物膨胀铲斗半宽；于是入厢点 = **铲斗边缘刚好接触真实卡车框**时的中心位置（而非把铲斗当点、边缘会超框刮帮）；`bucket_width=0` 即关闭外扩退回点模型；
+4. **圆-矩形交点**：对**外扩后**矩形 4 条边分别求交点（最多 8 个）；
+5. **选交点**：`rot_dir` 由 `dig_end swing → unload swing` 的最短路径自动判定；取沿 `rot_dir` 方向从 `dig_end swing` 出发角度差最小的交点作为 `p_entry`；
+6. **fallback**：无交点时，以外扩矩形 4 条边上距离 O 最近的点为方向，在回转圆上取对应圆上投影作为 `p_entry`；
+7. **退化**：`R < 1e-6` 或方向量归零时，回退到卸载点 xy。
+
+> RViz debug 层同时画出原始卡车框（白）与外扩后的**膨胀禁区**（橙，标注 `outset`），入厢点落在橙框上（= 铲斗边缘贴真实框）。
+
 
 > RTK 方位角 α 与挖机 base 系卡车航向 β 关系：`β = (180° − α) mod 360°`（北180/东90/南0/西270 逆时针增大；与 truck_dump_planner 6 方向闭环验证一致。曾误用 `+α` 导致卡车朝向镜像、厢体画偏）。
 
@@ -219,7 +223,7 @@ bucket_hold = bucket_attitude_target_deg − boom_实测 − arm_实测
 - swing 到位后**立即检查高度门控**（不管 boom 是否到位）：
   - 高度 OK → 切 Phase2；
   - 高度不足 → 转 `kWaitBucketClear`（gate boost 抬 boom 直到齿尖高于卡车）；
-- **Phase1 独立超时**（`max(boom行程/wp2_vel_boom_dps, swing行程/seg0_phase1_swing_dps) × factor`）→ 转高度门控 boost 重试。
+- **Phase1 独立超时**（`max(boom行程/seg0_boom_vel_dps, swing行程/seg0_phase1_swing_dps) × factor`）→ 转高度门控 boost 重试。
 
 ### Phase2 起点斜率衔接（防阀反向冲击）
 
@@ -323,7 +327,7 @@ dump_trajectory_planner/
 |:---|:---|:---|
 | `kinematics/*` | `boom_length/arm_length/bucket_tooth_length` + 销轴偏置 + 6 项关节限位 | 由 `KinematicsSolver` 加载 |
 | `feasibility/*` | `enable_envelope_prefilter`、`reach_min/max`、`dump_height_min/max`、`bucket_attitude_deg` | 包络粗筛 + IK 判定 |
-| `waypoint/*` | `attitude_angle_deg`、`wp4_height_bias`、`truck_height_offset`、`wp4_bucket_angle_deg`、`p5_boom/arm_cof`、`bucket_limit_*_deg`、各段速度、`truck_box_length/width`、`wp4_R_coff` | 航路点生成 |
+| `waypoint/*` | `wp4_height_bias`、`truck_height_offset`、`wp4_bucket_angle_deg`、`p5_boom/arm_cof`、`bucket_limit_*_deg`、段速度（`seg0_boom_vel_dps`/`swing_vel_dps`/`seg0_arm_vel_dps`/`unload_boom_vel_dps`/`unload_arm_vel_dps`/`unload_bucket_vel_dps`）、`truck_box_length/width`、`wp4_R_coff`、**`bucket_width`、`bucket_wall_clearance`**（铲斗宽碰撞外扩） | 航路点生成（姿态角目标已并入 `online_plan/bucket_attitude_target_deg`）|
 | `online_plan/*` | `seg0_swing_deg/boom_deg`、`seg1_swing_deg`、`seg2_arm_deg/bucket_deg`、`seg0_confirm_frames`、`segment_confirm_frames`、`segment_timeout_factor`、`bucket_clear_margin_m`、`bucket_clear_seg_idx`、`gate_timeout_sec`、`gate_boost_boom_deg`、`gate_boost_tolerance_deg`、`gate_max_boost_count`、`waypoint_clamp_abort_deg`、**`seg0_switch_threshold_deg`、`seg0_phase1_swing_dps`、`seg0_min_step_factor`、`seg0_swing_offset_deg`、`seg0_boom_pchip_start_cof`、`bucket_attitude_target_deg`**、**`unload_selector_enable`、`unload_candidates_count`、`unload_bucket_far_count/mid_count/near_count`** | 在线规划、Seg0 两阶段与动态卸载点选取 |
 | `visualization/*` | `enable`、`frame_id` | 可视化总开关与 marker 坐标系 |
 | 顶层 | `publish_rate`、`total_timeout_sec` | 全局 |

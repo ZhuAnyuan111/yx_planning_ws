@@ -1,6 +1,8 @@
 #include "dump_trajectory_planner/dump_visualizer.h"
 
+#include <algorithm>
 #include <cmath>
+#include <cstdio>
 
 namespace dump_trajectory_planner {
 
@@ -91,6 +93,24 @@ DumpVisualizer::DumpVisualizer(ros::NodeHandle& nh, ros::NodeHandle& pnh) {
   enabled_ = pnh.param("visualization/enable", true);
   pnh.param<std::string>("visualization/frame_id", frame_id_, "base");
 
+  // ---- 卡车 mesh 叠加参数（visualization/truck_mesh_*）----
+  truck_mesh_enable_ = pnh.param("visualization/truck_mesh_enable", false);
+  truck_mesh_keep_wire_ =
+      pnh.param("visualization/truck_mesh_keep_wireframe", true);
+  pnh.param<std::string>("visualization/truck_mesh_resource",
+                         truck_mesh_resource_,
+                         "package://exca200_simulink/meshes/SKT90E.dae");
+  truck_mesh_scale_ = pnh.param("visualization/truck_mesh_scale", 1.0);
+  truck_mesh_z_offset_ = pnh.param("visualization/truck_mesh_z_offset", 0.0);
+  // 偏置角以 deg 配置，内部转 rad。SKT90E.dae 车头沿局部 +Y，线框车头=(-cosβ,-sinβ)，
+  // 需 yaw=β+90° 对齐，故默认偏置 90°
+  truck_mesh_yaw_offset_ =
+      pnh.param("visualization/truck_mesh_yaw_offset_deg", 90.0) * kPi / 180.0;
+  // mesh 局部对齐点与地面（用于把模型摆正，默认按 SKT90E.dae 实测值）
+  truck_mesh_align_cx_ = pnh.param("visualization/truck_mesh_align_cx", 0.0);
+  truck_mesh_align_cy_ = pnh.param("visualization/truck_mesh_align_cy", -5.6);
+  truck_mesh_ground_z_ = pnh.param("visualization/truck_mesh_ground_z", -1.477);
+
   pub_truck_ = nh.advertise<visualization_msgs::MarkerArray>("dump_viz/truck", 1);
   pub_excavator_ = nh.advertise<visualization_msgs::MarkerArray>("dump_viz/excavator", 1);
   pub_plan_ = nh.advertise<visualization_msgs::MarkerArray>("dump_viz/plan", 1);
@@ -98,9 +118,14 @@ DumpVisualizer::DumpVisualizer(ros::NodeHandle& nh, ros::NodeHandle& pnh) {
   pub_status_ = nh.advertise<visualization_msgs::Marker>("dump_viz/status", 1);
   pub_candidates_ =
       nh.advertise<visualization_msgs::MarkerArray>("dump_viz/candidates", 1);
+  pub_debug_ =
+      nh.advertise<visualization_msgs::MarkerArray>("dump_viz/debug", 1);
+  debug_enabled_ = pnh.param("visualization/debug", true);
 
-  ROS_INFO("[dump_viz] visualizer %s (frame=%s)",
-           enabled_ ? "enabled" : "disabled", frame_id_.c_str());
+  ROS_INFO("[dump_viz] visualizer %s (frame=%s), truck_mesh=%s [%s], debug=%s",
+           enabled_ ? "enabled" : "disabled", frame_id_.c_str(),
+           truck_mesh_enable_ ? "on" : "off", truck_mesh_resource_.c_str(),
+           debug_enabled_ ? "on" : "off");
 }
 
 visualization_msgs::Marker DumpVisualizer::MakeBase(const std::string& ns,
@@ -131,7 +156,8 @@ void DumpVisualizer::PublishTruckScene(const TruckPose& truck,
   BoxCorners(truck, box_length, box_width, corners);
 
   // ---- 车厢 3D 线框（底圈 + 顶圈 + 4 竖棱）----
-  {
+  // 叠加 mesh 且未要求保留线框时跳过（keep_wireframe=false）
+  if (!truck_mesh_enable_ || truck_mesh_keep_wire_) {
     auto m = MakeBase("truck_box", 0, visualization_msgs::Marker::LINE_LIST);
     SetColor(m, 1.0, 0.55, 0.0);  // 橙色
     m.scale.x = 0.06;
@@ -145,6 +171,32 @@ void DumpVisualizer::PublishTruckScene(const TruckPose& truck,
       m.points.push_back(t0);  m.points.push_back(t1);   // 顶圈
       m.points.push_back(b0);  m.points.push_back(t0);   // 竖棱
     }
+    arr.markers.push_back(m);
+  }
+
+  // ---- 卡车 mesh 模型（方式A：随实时位姿摆放，复用同一 /dump_viz/truck 话题）----
+  // mesh 原点常不在车厢中心/地面，故：
+  //   1) 绕 base Z 轴转 yaw=β+yaw_offset，把 mesh 局部 +Y(车头) 对齐到线框车头方向；
+  //   2) 平移使 mesh 局部"对齐点"(align_cx,align_cy) 落到卡车中心，局部地面抬到 base z=0。
+  if (truck_mesh_enable_ && !truck_mesh_resource_.empty()) {
+    auto m = MakeBase("truck_mesh", 8,
+                      visualization_msgs::Marker::MESH_RESOURCE);
+    m.mesh_resource = truck_mesh_resource_;
+    m.mesh_use_embedded_materials = true;  // 有材质/贴图则按模型显示，否则用下方单色
+    SetColor(m, 0.75, 0.75, 0.78, 1.0);
+    const double yaw = truck.yaw_rad + truck_mesh_yaw_offset_;
+    const double sc = truck_mesh_scale_;
+    m.scale.x = m.scale.y = m.scale.z = sc;
+    // 对齐点经旋转后的世界偏移：R(yaw)·(cx,cy)
+    const double ox = std::cos(yaw) * truck_mesh_align_cx_ -
+                      std::sin(yaw) * truck_mesh_align_cy_;
+    const double oy = std::sin(yaw) * truck_mesh_align_cx_ +
+                      std::cos(yaw) * truck_mesh_align_cy_;
+    m.pose.position = Pt(truck.center_x - sc * ox,
+                        truck.center_y - sc * oy,
+                        truck_mesh_z_offset_ - sc * truck_mesh_ground_z_);
+    m.pose.orientation.z = std::sin(0.5 * yaw);  // 绕 Z 轴四元数（x/y 保持 0）
+    m.pose.orientation.w = std::cos(0.5 * yaw);
     arr.markers.push_back(m);
   }
 
@@ -520,6 +572,257 @@ void DumpVisualizer::PublishUnloadCandidates(const UnloadCandidateViz& c) {
   }
 
   pub_candidates_.publish(arr);
+}
+
+// ==================== 回转圆策略调试层 ====================
+
+void DumpVisualizer::PublishDebug(const PlanDebugInfo& dbg,
+                                  const Point3& /*unload_point*/,
+                                  const TruckPose& truck,
+                                  const WaypointParams& params,
+                                  const kinematics::KinematicsSolver& solver) {
+  if (!enabled_ || !debug_enabled_) return;
+
+  visualization_msgs::MarkerArray arr;
+  const EntryPointDebug& e = dbg.entry;
+
+  // 无有效数据：清空本图层
+  if (!e.valid) {
+    auto del = MakeBase("dbg", 0, visualization_msgs::Marker::LINE_STRIP);
+    del.action = visualization_msgs::Marker::DELETEALL;
+    arr.markers.push_back(del);
+    pub_debug_.publish(arr);
+    return;
+  }
+
+  const double zc = 0.04;  // 平面元素统一高度，避免与地面/其他层 z-fight
+
+  // ---- 通用绘制辅助 ----
+  auto addCircle = [&](const std::string& ns, double radius,
+                       double cr, double cg, double cb, double ca, double lw) {
+    if (radius <= 1e-6) return;
+    auto m = MakeBase(ns, 0, visualization_msgs::Marker::LINE_STRIP);
+    SetColor(m, cr, cg, cb, ca);
+    m.scale.x = lw;
+    constexpr int kSeg = 96;
+    for (int i = 0; i <= kSeg; ++i) {
+      const double th = 2.0 * kPi * static_cast<double>(i) / kSeg;
+      m.points.push_back(Pt(radius * std::cos(th), radius * std::sin(th), zc));
+    }
+    arr.markers.push_back(m);
+  };
+
+  auto addText = [&](const std::string& ns, int id, double x, double y, double z,
+                     double sz, double cr, double cg, double cb,
+                     const std::string& s) {
+    auto t = MakeBase(ns, id, visualization_msgs::Marker::TEXT_VIEW_FACING);
+    SetColor(t, cr, cg, cb);
+    t.scale.z = sz;
+    t.text = s;
+    t.pose.position = Pt(x, y, z);
+    arr.markers.push_back(t);
+  };
+
+  auto addRay = [&](const std::string& ns, double x, double y,
+                    double cr, double cg, double cb, const std::string& label) {
+    auto ln = MakeBase(ns, 0, visualization_msgs::Marker::LINE_STRIP);
+    SetColor(ln, cr, cg, cb, 0.7);
+    ln.scale.x = 0.03;
+    ln.points.push_back(Pt(0.0, 0.0, zc));
+    ln.points.push_back(Pt(x, y, zc));
+    arr.markers.push_back(ln);
+
+    auto sp = MakeBase(ns, 1, visualization_msgs::Marker::SPHERE);
+    SetColor(sp, cr, cg, cb);
+    sp.scale.x = sp.scale.y = sp.scale.z = 0.22;
+    sp.pose.position = Pt(x, y, zc + 0.02);
+    arr.markers.push_back(sp);
+
+    addText(ns, 2, x, y, zc + 0.45, 0.30, cr, cg, cb, label);
+  };
+
+  // ---- 1. 三条回转圆：R1(挖点半径,绿) / R2(卸点半径,红) / R(混合,青) ----
+  addCircle("dbg_r1", e.R1, 0.2, 0.9, 0.3, 0.45, 0.02);
+  addCircle("dbg_r2", e.R2, 1.0, 0.3, 0.3, 0.45, 0.02);
+  addCircle("dbg_r", e.R, 0.0, 0.9, 0.9, 0.9, 0.045);
+  {
+    char b[48];
+    snprintf(b, sizeof(b), "R1=%.2f", e.R1);
+    addText("dbg_r1", 5, e.R1, 0.0, zc + 0.22, 0.24, 0.4, 0.9, 0.5, b);
+    snprintf(b, sizeof(b), "R2=%.2f", e.R2);
+    addText("dbg_r2", 5, e.R2, 0.0, zc + 0.22, 0.24, 1.0, 0.5, 0.5, b);
+    snprintf(b, sizeof(b), "R=%.2f coff=%.2f", e.R, e.coff);
+    addText("dbg_r", 5, e.R, 0.0, zc + 0.45, 0.28, 0.2, 0.9, 0.9, b);
+  }
+
+  // ---- 2. 车厢矩形轮廓（平面），让候选交点 visibly 落在边上 ----
+  {
+    geometry_msgs::Point c[4];
+    BoxCorners(truck, params.truck_box_length, params.truck_box_width, c);
+    auto box = MakeBase("dbg_box", 0, visualization_msgs::Marker::LINE_STRIP);
+    SetColor(box, 1.0, 1.0, 1.0, 0.5);
+    box.scale.x = 0.03;
+    for (int i = 0; i < 4; ++i) box.points.push_back(Pt(c[i].x, c[i].y, zc));
+    box.points.push_back(Pt(c[0].x, c[0].y, zc));  // 闭合
+    arr.markers.push_back(box);
+
+    // 2b. 铲斗宽度外扩后的"膨胀禁区"（橙色外框）：卡车框按铲斗半宽膨胀，
+    //     回转圆与此外框求交，交点=铲斗边缘接触真实框时的中心位置
+    if (e.outset > 1e-6) {
+      const double out_L = params.truck_box_length + 2.0 * e.outset;
+      const double out_W = params.truck_box_width + 2.0 * e.outset;
+      geometry_msgs::Point ci[4];
+      BoxCorners(truck, out_L, out_W, ci);
+      auto ib = MakeBase("dbg_box_outset", 0,
+                         visualization_msgs::Marker::LINE_STRIP);
+      SetColor(ib, 1.0, 0.6, 0.1, 0.85);
+      ib.scale.x = 0.035;
+      for (int i = 0; i < 4; ++i) ib.points.push_back(Pt(ci[i].x, ci[i].y, zc));
+      ib.points.push_back(Pt(ci[0].x, ci[0].y, zc));  // 闭合
+      arr.markers.push_back(ib);
+      char b[96];
+      snprintf(b, sizeof(b), "膨胀禁区 outset=%.2fm\n(铲斗边缘接触框)", e.outset);
+      addText("dbg_box_outset_lbl", 0, ci[0].x, ci[0].y, zc + 0.45, 0.24,
+              1.0, 0.7, 0.2, b);
+    }
+  }
+
+  // ---- 3. dig_end / unload 射线（半径与 swing 来源）----
+  {
+    char b[64];
+    snprintf(b, sizeof(b), "dig_end sw=%.0f", e.dig_end_swing);
+    addRay("dbg_dig", e.dig_end_x, e.dig_end_y, 0.2, 0.9, 0.3, b);
+    snprintf(b, sizeof(b), "unload sw=%.0f", e.unload_swing);
+    addRay("dbg_unl", e.unload_x, e.unload_y, 1.0, 0.35, 0.35, b);
+  }
+
+  // ---- 4. 候选交点（灰）+ 逐点 swing/diff 标注 + 选中点（洋红）----
+  for (size_t i = 0; i < e.candidates.size(); ++i) {
+    const bool chosen = (static_cast<int>(i) == e.chosen_idx);
+    auto sp = MakeBase("dbg_cand", static_cast<int>(i),
+                       visualization_msgs::Marker::SPHERE);
+    if (chosen) SetColor(sp, 1.0, 0.2, 1.0);
+    else SetColor(sp, 0.6, 0.6, 0.6, 0.9);
+    const double sc = chosen ? 0.26 : 0.13;
+    sp.scale.x = sp.scale.y = sp.scale.z = sc;
+    sp.pose.position = Pt(e.candidates[i].x, e.candidates[i].y, zc + 0.02);
+    arr.markers.push_back(sp);
+
+    char b[64];
+    snprintf(b, sizeof(b), "#%zu sw%.0f d%.0f", i, e.cand_swing[i],
+             e.cand_diff[i]);
+    if (chosen)
+      addText("dbg_cand_lbl", static_cast<int>(i), e.candidates[i].x,
+              e.candidates[i].y, zc + 0.32, 0.28, 1.0, 0.4, 1.0, b);
+    else
+      addText("dbg_cand_lbl", static_cast<int>(i), e.candidates[i].x,
+              e.candidates[i].y, zc + 0.26, 0.20, 0.75, 0.75, 0.75, b);
+  }
+
+  // ---- 5. rot_dir 方向弧 + 箭头（从 dig_end_swing 沿 rot_dir 扫向选中点）----
+  {
+    const double sweep = std::max(15.0, std::min(e.out_diff + 10.0, 120.0));
+    const double th0 = (e.dig_end_swing - 180.0) * kPi / 180.0;  // base 角
+    const double dth = e.rot_dir * sweep * kPi / 180.0;
+    auto arc = MakeBase("dbg_rot", 0, visualization_msgs::Marker::LINE_STRIP);
+    SetColor(arc, 1.0, 0.6, 0.0, 0.9);
+    arc.scale.x = 0.035;
+    constexpr int kSeg = 40;
+    for (int i = 0; i <= kSeg; ++i) {
+      const double th = th0 + dth * static_cast<double>(i) / kSeg;
+      arc.points.push_back(Pt(e.R * std::cos(th), e.R * std::sin(th), zc + 0.01));
+    }
+    arr.markers.push_back(arc);
+
+    auto ar = MakeBase("dbg_rot", 1, visualization_msgs::Marker::ARROW);
+    SetColor(ar, 1.0, 0.6, 0.0);
+    ar.scale.x = 0.06;
+    ar.scale.y = 0.14;
+    ar.scale.z = 0.14;
+    const double thm = th0 + dth * 0.82;
+    const double the = th0 + dth;
+    ar.points.push_back(Pt(e.R * std::cos(thm), e.R * std::sin(thm), zc + 0.01));
+    ar.points.push_back(Pt(e.R * std::cos(the), e.R * std::sin(the), zc + 0.01));
+    arr.markers.push_back(ar);
+
+    addText("dbg_rot", 2, e.R * std::cos(th0 + dth * 0.5),
+            e.R * std::sin(th0 + dth * 0.5), zc + 0.30, 0.26, 1.0, 0.7, 0.2,
+            e.rot_dir > 0 ? "CCW" : "CW");
+  }
+
+  // ---- 6. fallback（flag==2）：O→最近边点→圆上投影 ----
+  if (e.flag == 2) {
+    auto ln = MakeBase("dbg_fb", 0, visualization_msgs::Marker::LINE_STRIP);
+    SetColor(ln, 1.0, 1.0, 0.0, 0.9);
+    ln.scale.x = 0.04;
+    ln.points.push_back(Pt(0.0, 0.0, zc));
+    ln.points.push_back(Pt(e.fb_edge_x, e.fb_edge_y, zc));
+    ln.points.push_back(Pt(e.out_x, e.out_y, zc));
+    arr.markers.push_back(ln);
+  }
+
+  // ---- 7. 入厢点 = 铲斗【铰接点 PIVOT】；并画出【齿尖 TOOTH = plan 层 WP2】与铲斗跨度 ----
+  // 说明：WP4 IK 用 bucket_tooth_length_override=0，故 entry(out_x,out_y) 是"斗杆-铲斗
+  //   铰接点"，落在回转圆∩车厢边上；而 plan 层 WP2 画的是 swing_center_forward 的"齿尖"。
+  //   二者沿绝对铲斗角方向相距 ~bucket_tooth_length，是同一铲斗的两端，并非两个矛盾的点。
+  {
+    const double wp4_z =
+        truck.center_z - params.truck_height_offset + params.wp4_height_bias;
+
+    // 7a. 铰接点 PIVOT（洋红球）+ 到 IK 目标高度的垂直参考线
+    auto sp = MakeBase("dbg_entry", 0, visualization_msgs::Marker::SPHERE);
+    SetColor(sp, 1.0, 0.2, 1.0);
+    sp.scale.x = sp.scale.y = sp.scale.z = 0.30;
+    sp.pose.position = Pt(e.out_x, e.out_y, zc + 0.03);
+    arr.markers.push_back(sp);
+
+    char b[192];
+    snprintf(b, sizeof(b), "[%s] PIVOT(铰接点) flag=%d\nsw=%.0f d=%.0f rot=%s",
+             dbg.trigger.c_str(), e.flag, e.out_swing, e.out_diff,
+             e.rot_dir > 0 ? "CCW" : "CW");
+    addText("dbg_entry", 1, e.out_x, e.out_y, zc + 0.80, 0.32, 1.0, 0.85, 1.0, b);
+
+    auto vl = MakeBase("dbg_entry", 2, visualization_msgs::Marker::LINE_STRIP);
+    SetColor(vl, 1.0, 0.2, 1.0, 0.4);
+    vl.scale.x = 0.02;
+    vl.points.push_back(Pt(e.out_x, e.out_y, zc));
+    vl.points.push_back(Pt(e.out_x, e.out_y, wp4_z));
+    arr.markers.push_back(vl);
+
+    // 7b. 齿尖 TOOTH（= plan 层 WP2，同色蓝）+ 铰接点→齿尖 铲斗跨度线（地面投影，俯视清晰）
+    if (dbg.has_wp4) {
+      const auto tooth = solver.swing_center_forward(dbg.wp4_joint);
+      const double span = std::hypot(tooth.x - e.out_x, tooth.y - e.out_y);
+
+      auto bl = MakeBase("dbg_tooth", 0, visualization_msgs::Marker::LINE_STRIP);
+      SetColor(bl, 0.9, 0.9, 0.2, 0.9);  // 黄：铲斗跨度（铰接点↔齿尖）
+      bl.scale.x = 0.05;
+      bl.points.push_back(Pt(e.out_x, e.out_y, zc));
+      bl.points.push_back(Pt(tooth.x, tooth.y, zc));
+      arr.markers.push_back(bl);
+
+      auto ts = MakeBase("dbg_tooth", 1, visualization_msgs::Marker::SPHERE);
+      SetColor(ts, 0.2, 0.5, 1.0);       // 蓝：与 plan 层 WP2 同色
+      ts.scale.x = ts.scale.y = ts.scale.z = 0.28;
+      ts.pose.position = Pt(tooth.x, tooth.y, zc + 0.03);
+      arr.markers.push_back(ts);
+
+      // 齿尖垂直参考线：地面投影 ↔ 真实齿尖高度（顶端即 plan 层 WP2 蓝球所在）
+      auto tv = MakeBase("dbg_tooth", 2, visualization_msgs::Marker::LINE_STRIP);
+      SetColor(tv, 0.2, 0.5, 1.0, 0.4);
+      tv.scale.x = 0.02;
+      tv.points.push_back(Pt(tooth.x, tooth.y, zc));
+      tv.points.push_back(Pt(tooth.x, tooth.y, tooth.z));
+      arr.markers.push_back(tv);
+
+      char tb[96];
+      snprintf(tb, sizeof(tb), "TOOTH(齿尖)=WP2\nPIVOT→TOOTH Δ=%.2fm", span);
+      addText("dbg_tooth", 3, tooth.x, tooth.y, zc + 0.80, 0.30, 0.45, 0.7, 1.0,
+              tb);
+    }
+  }
+
+  pub_debug_.publish(arr);
 }
 
 }  // namespace dump_trajectory_planner

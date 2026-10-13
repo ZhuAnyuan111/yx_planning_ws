@@ -14,6 +14,7 @@
 
   <!-- ===== 开关与场景 ===== -->
   <arg name="rviz"             default="true"/>
+  <arg name="hud"              default="true"/>  <!-- 全流程状态 HUD（decision FSM → RViz 面板）-->
   <arg name="scenario_file"    default="$(find exca200_simulink)/scenarios/baseline.yaml"/>
   <arg name="include_truck_dump_viz" default="false"/>
 
@@ -101,7 +102,20 @@
     <param name="smooth_finish_delay_sec" value="$(arg smooth_finish_delay)"/>
   </node>
 
-  <!-- ===== 8) RViz ===== -->
+  <!-- ===== 8) Flow HUD（L4 调试）：decision 状态话题 → RViz 全局文字面板 + 跳转时间线 ===== -->
+  <node if="$(arg hud)" name="flow_hud" pkg="exca200_simulink" type="flow_hud.py" output="screen">
+    <param name="frame_id"   value="base_link"/>
+    <param name="rate_hz"    value="5.0"/>
+    <param name="text_scale" value="0.45"/>
+    <param name="line_spacing_factor" value="1.3"/>
+    <param name="event_lines" value="4"/>
+    <!-- 面板移到挖机左侧（-y 侧向空地，避开 (0,0,7.5) 的 dump_viz/status 竖列），
+         并降到贴近机身高度：逐行向下排约 7m，anchor z=8 使整块落在 z≈1~8。
+         若左右相反，把 anchor 的 y 分量取反即可。 -->
+    <rosparam param="anchor" subst_value="true">[0.0, -12.0, 8.0]</rosparam>
+  </node>
+
+  <!-- ===== 9) RViz ===== -->
   <node if="$(arg rviz)" name="rviz" pkg="rviz" type="rviz" output="screen"
         args="-d $(find exca200_simulink)/config/rviz_single.rviz"/>
 </launch>

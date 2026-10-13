@@ -26,18 +26,18 @@ feasibility:
   enable_envelope_prefilter: false   # 是否启用 IK 前的包络粗筛
   reach_min: 3.0                    # 水平半径最小值 (m)
   reach_max: 12.0                   # 水平半径最大值 (m)
-  dump_height_min: 0.0              # 卸载点最低高度 (m)
+  dump_height_min: -2.0              # 卸载点最低高度 (m)
   dump_height_max: 5.5              # 卸载点最高高度 (m)
   bucket_attitude_deg: -90.0        # 卸载姿态角 (deg，齿尖朝下)
 
 # ---- 关键航路点生成（简化 4 航路点：WP1, WP4, WP5, WP6）----
 waypoint:
-  # 姿态角上限：boom+arm+bucket ≥ 该值时用姿态角约束修正 bucket
-  attitude_angle_deg: -180.0
+  # 注：铲斗姿态角目标已合并到 online_plan/bucket_attitude_target_deg（单一真源）。
+  #     航路点生成侧 AdjustBucketByAttitude 与 Seg0 Phase1 逐帧维持共用同一值，此处不再单列。
 
   # WP4 铰接点相对卡车表面的高度偏置 (m)
   # 铰接点目标高度 = (truck_center_z - truck_height_offset) + wp4_height_bias
-  wp4_height_bias: 3.0
+  wp4_height_bias: 2.5
 
   # 卡车框高度偏移 (m)：卡车框高度 = truck_center_z - truck_height_offset
   truck_height_offset: 0.5
@@ -49,13 +49,13 @@ waypoint:
   p5_boom_cof: 0.5
   p5_arm_cof: 0.5
 
-  # 段主导关节速度 (deg/s)
-  wp2_vel_boom_dps: 10.0
-  wp4_vel_swing_dps: 15.0
-  wp4_vel_arm_dps: 15.0
-  wp5_vel_boom_dps: 8.0
-  wp5_vel_arm_dps: 15.0
-  wp5_vel_bkt_dps: 50.0
+  # 段主导关节速度 (deg/s)——命名按"段+关节"语义（旧 wp2/wp4/wp5_ 编号已废弃）
+  seg0_boom_vel_dps:      10.0   # Seg0(WP1→WP4) boom 抬升速率；亦用于 Phase1/门控 boost 限速与超时估算
+  swing_vel_dps:          15.0   # swing 回转速率（Seg0 与 Seg1 共用）
+  seg0_arm_vel_dps:       15.0   # Seg0 arm 速率（仅用于段时间/超时预算）
+  unload_boom_vel_dps:     8.0   # Seg1+Seg2 boom 速率
+  unload_arm_vel_dps:     15.0   # Seg1+Seg2 arm 速率
+  unload_bucket_vel_dps:  50.0   # Seg2 bucket 速率
 
   # 铲斗关节限位 (deg)
   bucket_limit_lower_deg: -170.0
@@ -64,7 +64,15 @@ waypoint:
   # ---- WP4 入厢点（回转圆策略，照 MATLAB calc_entry_point_circle_strategy）----
   truck_box_length: 5.0        # 卡车厢长 L (m)
   truck_box_width:  2.6        # 卡车厢宽 W (m)
-  wp4_R_coff:       0.5        # 回转圆半径混合系数：R = coff·R_dig_end + (1-coff)·R_unload
+  wp4_R_coff:       0.4        # 回转圆半径混合系数：R = coff·R_dig_end + (1-coff)·R_unload
+
+  # ---- 铲斗宽度碰撞（配置空间外扩 / Minkowski 膨胀卡车框）----
+  # 卡车框每边外扩 outset = 0.5·bucket_width + bucket_wall_clearance 后再与回转圆求交：
+  # 把有宽度的铲斗退化为中心线（铰接点），卡车框膨胀铲斗半宽，于是入厢点 = 铲斗边缘
+  # 刚好接触真实卡车框时的中心位置（而非把铲斗当点、边缘会超框刮帮）。
+  # bucket_wall_clearance=0 即边缘贴合框线；置 bucket_width: 0.0 即关闭外扩（退回点模型）。
+  bucket_width:         2.0    # 铲斗宽度 W_b (m)，暂定默认 2.0
+  bucket_wall_clearance: 0.1   # 额外安全间隙 (m)，叠加在 W_b/2 之上
 
 # ---- 逐帧发布频率 (Hz) ----
 publish_rate: 10.0
@@ -73,6 +81,21 @@ publish_rate: 10.0
 visualization:
   enable: true          # 可视化总开关：false 时不发布任何 dump_viz/* 话题
   frame_id: base        # 全部可视化 marker 的坐标系
+  debug: true           # 回转圆策略调试层 /dump_viz/debug（R1/R2/R 圆+候选交点+rot_dir弧+触发源标注）；正常跑可关
+
+  # ---- 卡车 mesh 模型叠加（方式A）----
+  # mesh marker 复用 /dump_viz/truck 话题，随卡车实时位姿摆放，RViz 现有 MarkerArray 显示项自动渲染。
+  # 注意：RViz 需能通过 package:// 解析到该 mesh（exca200_simulink 已在 ws 内、source 后即可）。
+  truck_mesh_enable: true                                   # 总开关：false 时恢复纯线框
+  truck_mesh_resource: package://exca200_simulink/meshes/SKT90E.dae
+  truck_mesh_scale: 1.0                                     # 均匀缩放（模型尺寸与厢长厢宽不符时调）
+  truck_mesh_z_offset: -3.5                                  # 在自动落地基础上再叠加的高度 (m)
+  truck_mesh_yaw_offset_deg: -90.0                           # 车头朝向偏置 (deg)：SKT90E 车头沿局部+Y，需 β+90 对齐线框车头
+  truck_mesh_keep_wireframe: true                           # 叠加时是否保留原车厢线框（调试对照，false 只留 mesh）
+  # ---- 把模型原点补偿到车厢中心/地面（SKT90E.dae 实测，换模型需重测）----
+  truck_mesh_align_cx: 0.0                                  # 车厢中心在 mesh 局部系的 x (m)
+  truck_mesh_align_cy: -5.6                                 # 车厢中心在 mesh 局部系的 y (m)（车头朝 +Y，车厢在后方故为负）
+  truck_mesh_ground_z: -1.477                               # mesh 局部地面(轮胎最低点) z (m)，抬到 base z=0
 
 # ---- 全局执行超时 (s) ----
 total_timeout_sec: 30.0
@@ -102,7 +125,7 @@ online_plan:
 
   # 铲斗需超出卡车上表面的裕量 (m)
   # （卡车上表面高度为动态值：truck_center_z − waypoint/truck_height_offset；
-  #   阈值须低于 WP2 齿尖可达高度，否则门控死锁——曾设 1.8 导致阈值 2.21m
+  #   阈值须低于各航路点齿尖可达高度，否则门控死锁——曾设 1.8 导致阈值 2.21m
   #   高于全部航路点齿尖(最高 1.81m)，boost 耗尽必然中止）
   bucket_clear_margin_m: 0.5
 
@@ -131,7 +154,7 @@ online_plan:
   # swing 到达 Phase1 目标 ±阈值(deg)后检查高度门控
   seg0_switch_threshold_deg: 3.0
   # Phase1 复合回转指令速率(deg/s)：Phase1 期间 swing 向段终点回转的速率。
-  # 独立于 waypoint/wp4_vel_swing_dps，可单独调"边升边转"快慢（实际受泵流量限制会滞后）
+  # 独立于 waypoint/swing_vel_dps，可单独调"边升边转"快慢（实际受泵流量限制会滞后）
   seg0_phase1_swing_dps: 15.0
   # 小行程退化因子：boom 抬升量 < 该值 × seg0_switch_threshold_deg 时，Seg0 退化为单段 PCHIP
   seg0_min_step_factor: 2.0
@@ -144,8 +167,11 @@ online_plan:
   #   swing 阶跃到位、高度门控通过后由 Phase2 时间 PCHIP 从 mid 平滑收尾到 WP4。
   #   0=不抬(停在实时角)、1=直接阶跃到 WP4 高度；调大→Phase1 抬得越高(跨越厢帮越安全)
   seg0_boom_pchip_start_cof: 0.5
-  # 铲斗姿态角目标（boom+arm+bucket，有符号 deg）：Phase1 每帧按实测 boom/arm 反馈
-  # 计算参考 bucket 维持该姿态；当前姿态角 >= 该值时才回调收斗（单向，不反向张斗）
+  # 铲斗姿态角目标（boom+arm+bucket，有符号 deg）——【单一真源】：
+  #   ① Seg0 Phase1 每帧按实测 boom/arm 反馈计算参考 bucket 维持该姿态
+  #      （当前姿态角 >= 该值时才回调收斗，单向，不反向张斗）；
+  #   ② 航路点生成侧 AdjustBucketByAttitude 修正 WP1/WP4/WP5 的 bucket 也复用此值
+  #      （原 waypoint/attitude_angle_deg 已并入此处，不再单独配置）。
   bucket_attitude_target_deg: -180.0
 
   # ---- 动态卸载点选取 ----

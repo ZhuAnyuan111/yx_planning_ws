@@ -38,8 +38,10 @@ struct TruckPose {
 
 /// 航路点生成参数（角度类字段单位统一为 deg，速度单位 deg/s）
 struct WaypointParams {
-  // 姿态角上限（deg）：boom+arm+bucket 之和的最大姿态
-  double attitude_angle_deg = 25.0;
+  // 卸载途中维持的铲斗姿态角目标（boom+arm+bucket，有符号 deg）。
+  // 单一真源 = online_plan/bucket_attitude_target_deg（节点 LoadParams 里赋值到此），
+  // 用于 AdjustBucketByAttitude 修正 WP1/WP4/WP5 的 bucket。
+  double bucket_attitude_target_deg = -180.0;
 
   // WP4 厢上过渡点：铰接点高度 = truck_top_height + wp4_height_bias
   // （wp4_height_bias 为斗杆-铲斗铰接点相对卡车表面的高度偏置）
@@ -55,13 +57,13 @@ struct WaypointParams {
   double p5_boom_cof = 0.5;
   double p5_arm_cof = 0.5;
 
-  // 各段主导关节速度（deg/s）
-  double wp2_vel_boom_dps = 8.0;
-  double wp4_vel_swing_dps = 15.0;
-  double wp4_vel_arm_dps = 10.0;
-  double wp5_vel_boom_dps = 8.0;
-  double wp5_vel_arm_dps = 10.0;
-  double wp5_vel_bkt_dps = 15.0;
+  // 各段主导关节速度（deg/s）——命名按"段+关节"语义（旧 wp2/wp4/wp5_ 编号已废弃）：
+  double seg0_boom_vel_dps = 8.0;      // Seg0(WP1→WP4) boom 抬升速率（亦用于 Phase1 超时估算）
+  double swing_vel_dps = 15.0;         // swing 回转速率（Seg0 与 Seg1 共用）
+  double seg0_arm_vel_dps = 10.0;      // Seg0 Phase1 超时估算用的 arm 速率
+  double unload_boom_vel_dps = 8.0;    // Seg1+Seg2 boom 速率
+  double unload_arm_vel_dps = 10.0;    // Seg1+Seg2 arm 速率
+  double unload_bucket_vel_dps = 15.0; // Seg2 bucket 速率
 
   // 铲斗关节限位（deg）
   double bucket_limit_lower_deg = -170.0;
@@ -71,6 +73,40 @@ struct WaypointParams {
   double truck_box_length = 5.0;   // 卡车厢长 L（m）
   double truck_box_width = 2.6;    // 卡车厢宽 W（m）
   double wp4_R_coff = 0.5;         // 回转圆半径混合系数：R = coff·R_dig_end + (1-coff)·R_unload
+
+  // ---- 铲斗宽度碰撞（配置空间外扩 / Minkowski 膨胀卡车框）----
+  // 卡车框矩形按 outset = 0.5·bucket_width + bucket_wall_clearance 向外膨胀后再与回转圆求交：
+  // 把有宽度的铲斗退化为其宽度中心线（回转圆上的铰接点），障碍物（卡车框）膨胀铲斗半宽，
+  // 于是入厢点 = 铲斗边缘刚好接触真实卡车框时的中心位置（而非把铲斗当点、边缘会超框刮帮）。
+  double bucket_width = 2.0;          // 铲斗宽度 W_b（m），YAML 可调
+  double bucket_wall_clearance = 0.1; // 额外安全间隙（m），叠加在 W_b/2 之上；=0 即边缘贴合框线
+};
+
+/// 回转圆入厢点计算的中间量（供可视化/调试）。
+/// 由 ComputeMiddleUpXY 通过可选出参回填；不改变 xy 计算行为本身。
+struct EntryPointDebug {
+  bool valid = false;   // ComputeMiddleUpXY 是否执行过
+  int flag = 0;         // 0=退化(R 过小); 1=圆-矩形交点; 2=fallback 最近边投影
+  double coff = 0.0;    // wp4_R_coff
+  double R1 = 0.0;      // |dig_end| 半径（m）
+  double R2 = 0.0;      // |unload| 半径（m）
+  double R = 0.0;       // 混合回转圆半径（m）
+  int rot_dir = 0;      // +1=CCW, -1=CW（由 dig_end→unload 最短路径判定）
+  // 配置空间外扩：卡车框每边实际外扩量（m）= 0.5·bucket_width + bucket_wall_clearance；
+  // 供可视化画"膨胀禁区"外框（回转圆与之外扩求交，交点=铲斗边缘接触真实框的中心位置）
+  double outset = 0.0;
+  // dig_end / unload 参考点（base 系 xy）与其 swing（deg）
+  double dig_end_x = 0.0, dig_end_y = 0.0, dig_end_swing = 0.0;
+  double unload_x = 0.0, unload_y = 0.0, unload_swing = 0.0;
+  // 全部圆-矩形候选交点（base 系，z=0）+ 各自 swing（deg）+ 沿 rot_dir 的角度差（deg）
+  std::vector<Point3> candidates;
+  std::vector<double> cand_swing;
+  std::vector<double> cand_diff;
+  int chosen_idx = -1;  // 选中的候选交点下标（flag==1 时有效）
+  // 最终入厢点（base 系 xy）+ swing + 角度差
+  double out_x = 0.0, out_y = 0.0, out_swing = 0.0, out_diff = 0.0;
+  // fallback（flag==2）：矩形最近边点（base 系），投影终点即 out_x/out_y
+  double fb_edge_x = 0.0, fb_edge_y = 0.0;
 };
 
 /// 生成结果
@@ -79,6 +115,7 @@ struct DumpWaypointResult {
   std::string message;
   std::vector<kinematics::JointState> waypoints;  // WP1,WP4,WP5,WP6（rad）
   std::vector<double> t_array;                    // 绝对时刻 t1..t4（秒），t1=0
+  EntryPointDebug entry_dbg;                      // WP4 回转圆策略中间量（调试用）
 };
 
 /// 生成 4 关键航路点及段时间
@@ -111,6 +148,7 @@ void ComputeMiddleUpXY(const Point3& unload_point,
                        const kinematics::KinematicsSolver& solver,
                        const WaypointParams& params,
                        double& out_x,
-                       double& out_y);
+                       double& out_y,
+                       EntryPointDebug* dbg = nullptr);
 
 }  // namespace dump_trajectory_planner

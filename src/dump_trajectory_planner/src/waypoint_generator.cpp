@@ -133,23 +133,36 @@ EntryPointResult CalcEntryPointCircleStrategy(double dig_end_x, double dig_end_y
                                               double truck_cx, double truck_cy,
                                               double truck_yaw_rad,
                                               double L, double W,
-                                              int rot_dir) {
+                                              double bucket_width,
+                                              double wall_clearance,
+                                              int rot_dir,
+                                              EntryPointDebug* dbg) {
   EntryPointResult r;
 
   // ---- 1. 回转圆半径 ----
   const double R1 = std::hypot(dig_end_x, dig_end_y);
   const double R2 = std::hypot(unload_x, unload_y);
   const double R = R_coff * R1 + (1.0 - R_coff) * R2;
+  if (dbg) { dbg->R1 = R1; dbg->R2 = R2; dbg->R = R; dbg->coff = R_coff; }
   if (R < 1e-6) {
     r.flag = 0;
+    if (dbg) dbg->flag = 0;
     return r;
   }
 
   // ---- 2. 坐标变换 (base → truck-local) ----
   const double half_L = 0.5 * L;
   const double half_W = 0.5 * W;
-  const double xmin = -half_L, xmax = half_L;
-  const double ymin = -half_W, ymax = half_W;
+  // ---- 铲斗宽度碰撞：配置空间外扩（Minkowski 膨胀卡车框）----
+  // 把有宽度的铲斗退化为其宽度中心线（回转圆上的铰接点），卡车框每边向外膨胀
+  // outset = 0.5·bucket_width + wall_clearance。于是"回转圆 ∩ 膨胀框"的入厢点
+  // = 铲斗边缘刚好接触真实卡车框时的中心位置：wall_clearance=0 边缘贴合框线，
+  // >0 则边缘离框留间隙（更保守防刮）。膨胀只放大框、不退化，无需截断。
+  double outset = 0.5 * bucket_width + wall_clearance;
+  if (!(outset > 0.0)) outset = 0.0;  // 负值/NaN 归零（等价于不外扩，退回点模型）
+  const double xmin = -half_L - outset, xmax = half_L + outset;
+  const double ymin = -half_W - outset, ymax = half_W + outset;
+  if (dbg) dbg->outset = outset;
   const double cy = std::cos(truck_yaw_rad);
   const double sy = std::sin(truck_yaw_rad);
   // O_local = R_WT' * (O - truck_center)；O = [0,0]，故代入化简
@@ -200,6 +213,7 @@ EntryPointResult CalcEntryPointCircleStrategy(double dig_end_x, double dig_end_y
     const double dig_end_swing = CalcSwingDeg(dig_end_x, dig_end_y);
     double best_diff = 361.0;
     double best_x = unload_x, best_y = unload_y;
+    int best_i = -1;
     bool found = false;
     for (int i = 0; i < n_inter; ++i) {
       const double ix = inter[i].x;
@@ -210,10 +224,16 @@ EntryPointResult CalcEntryPointCircleStrategy(double dig_end_x, double dig_end_y
       const double wy = sy * ix + cy * iy + truck_cy;
       const double sw = CalcSwingDeg(wx, wy);
       const double diff = AngleDiffDeg(dig_end_swing, sw, rot_dir);
+      if (dbg) {
+        dbg->candidates.push_back(Point3{wx, wy, 0.0});
+        dbg->cand_swing.push_back(sw);
+        dbg->cand_diff.push_back(diff);
+      }
       if (diff < best_diff) {
         best_diff = diff;
         best_x = wx;
         best_y = wy;
+        best_i = dbg ? static_cast<int>(dbg->candidates.size()) - 1 : 0;
         found = true;
       }
     }
@@ -221,6 +241,14 @@ EntryPointResult CalcEntryPointCircleStrategy(double dig_end_x, double dig_end_y
       r.flag = 1;
       r.x = best_x;
       r.y = best_y;
+      if (dbg) {
+        dbg->flag = 1;
+        dbg->chosen_idx = best_i;
+        dbg->out_x = best_x;
+        dbg->out_y = best_y;
+        dbg->out_swing = CalcSwingDeg(best_x, best_y);
+        dbg->out_diff = best_diff;
+      }
       return r;
     }
   }
@@ -238,6 +266,7 @@ EntryPointResult CalcEntryPointCircleStrategy(double dig_end_x, double dig_end_y
   const double vn = std::hypot(vx, vy);
   if (vn < 1e-6) {
     r.flag = 0;
+    if (dbg) dbg->flag = 0;
     return r;
   }
   const double px_local = Ox_l + R * vx / vn;
@@ -246,6 +275,18 @@ EntryPointResult CalcEntryPointCircleStrategy(double dig_end_x, double dig_end_y
   r.x = cy * px_local - sy * py_local + truck_cx;
   r.y = sy * px_local + cy * py_local + truck_cy;
   r.flag = 2;
+  if (dbg) {
+    dbg->flag = 2;
+    dbg->chosen_idx = -1;
+    // 矩形最近边点（truck-local → base），可视化画 O→该点→圆上投影 的方向线
+    dbg->fb_edge_x = cy * nx - sy * ny + truck_cx;
+    dbg->fb_edge_y = sy * nx + cy * ny + truck_cy;
+    dbg->out_x = r.x;
+    dbg->out_y = r.y;
+    dbg->out_swing = CalcSwingDeg(r.x, r.y);
+    dbg->out_diff = AngleDiffDeg(CalcSwingDeg(dig_end_x, dig_end_y),
+                                 dbg->out_swing, rot_dir);
+  }
   return r;
 }
 
@@ -258,7 +299,8 @@ void ComputeMiddleUpXY(const Point3& unload_point,
                        const kinematics::KinematicsSolver& solver,
                        const WaypointParams& p,
                        double& out_x,
-                       double& out_y) {
+                       double& out_y,
+                       EntryPointDebug* dbg) {
   // dig_end 由 start_joint 的 FK 得到（铲齿尖 XY）
   const auto dig_end = solver.swing_center_forward(start_joint);
   const double dig_end_x = dig_end.x;
@@ -271,17 +313,36 @@ void ComputeMiddleUpXY(const Point3& unload_point,
   const double cw = AngleDiffDeg(sw_dig, sw_unl, -1);
   const int rot_dir = (ccw <= cw) ? 1 : -1;
 
+  if (dbg) {
+    *dbg = EntryPointDebug{};  // 清空上一轮残留
+    dbg->valid = true;
+    dbg->rot_dir = rot_dir;
+    dbg->dig_end_x = dig_end_x;
+    dbg->dig_end_y = dig_end_y;
+    dbg->dig_end_swing = sw_dig;
+    dbg->unload_x = unload_point.x;
+    dbg->unload_y = unload_point.y;
+    dbg->unload_swing = sw_unl;
+  }
+
   const auto res = CalcEntryPointCircleStrategy(
       dig_end_x, dig_end_y, unload_point.x, unload_point.y,
       p.wp4_R_coff,
       truck_pose.center_x, truck_pose.center_y, truck_pose.yaw_rad,
       p.truck_box_length, p.truck_box_width,
-      rot_dir);
+      p.bucket_width, p.bucket_wall_clearance,
+      rot_dir, dbg);
 
   if (res.flag == 0) {
     // 退化：直接用卸载点 xy
     out_x = unload_point.x;
     out_y = unload_point.y;
+    if (dbg) {
+      dbg->out_x = out_x;
+      dbg->out_y = out_y;
+      dbg->out_swing = CalcSwingDeg(out_x, out_y);
+      dbg->out_diff = 0.0;
+    }
   } else {
     out_x = res.x;
     out_y = res.y;
@@ -311,7 +372,7 @@ DumpWaypointResult GenerateDumpWaypoints(
   const double ar_unload = Rad2Deg(unload_joint.arm);
   const double bk_unload = Rad2Deg(unload_joint.bucket);
 
-  const double attitude = p.attitude_angle_deg;
+  const double attitude = p.bucket_attitude_target_deg;
   const double bkt_lo = p.bucket_limit_lower_deg;
   const double bkt_hi = p.bucket_limit_upper_deg;
 
@@ -322,7 +383,7 @@ DumpWaypointResult GenerateDumpWaypoints(
   // ---------- WP4: 厢上过渡点，先 IK ----------
   double mx = 0.0, my = 0.0;
   ComputeMiddleUpXY(unload_point, start_joint, unload_joint, truck_pose, solver,
-                    p, mx, my);
+                    p, mx, my, &result.entry_dbg);
 
   // 卡车框高度 = 卡车中心 RTK 高度 - 偏移量
   const double truck_top_height = truck_pose.center_z - p.truck_height_offset;
@@ -372,24 +433,24 @@ DumpWaypointResult GenerateDumpWaypoints(
   // ---------- 段时间（4 航路点 → 3 段）----------
   const double t1 = 0.0;
 
-  // Seg0: WP1→WP4（boom+swing 联动，段时间取主导关节）
+  // Seg0: WP1→WP4（离线段时间预算取主导关节；实际执行走节点端两阶段策略）
   const double t2_dur = std::max(
-      std::abs(bo4 - bo1) / std::max(p.wp2_vel_boom_dps, 1e-6),
-      std::abs(sw4u - sw1) / std::max(p.wp4_vel_swing_dps, 1e-6));
+      std::abs(bo4 - bo1) / std::max(p.seg0_boom_vel_dps, 1e-6),
+      std::abs(sw4u - sw1) / std::max(p.swing_vel_dps, 1e-6));
   const double t2 = t1 + t2_dur;
 
   // Seg1: WP4→WP5（swing 到位 + boom/arm 过渡）
   const double t3_dur = std::max({
-      std::abs(sw5 - sw4u) / std::max(p.wp4_vel_swing_dps, 1e-6),
-      std::abs(bo5 - bo4) / std::max(p.wp5_vel_boom_dps, 1e-6),
-      std::abs(ar5 - ar4) / std::max(p.wp5_vel_arm_dps, 1e-6)});
+      std::abs(sw5 - sw4u) / std::max(p.swing_vel_dps, 1e-6),
+      std::abs(bo5 - bo4) / std::max(p.unload_boom_vel_dps, 1e-6),
+      std::abs(ar5 - ar4) / std::max(p.unload_arm_vel_dps, 1e-6)});
   const double t3 = t2 + t3_dur;
 
   // Seg2: WP5→WP6（arm/bucket/boom 均在运动）
   const double t4_dur = std::max({
-      std::abs(bk6 - bk5) / std::max(p.wp5_vel_bkt_dps, 1e-6),
-      std::abs(bo6 - bo5) / std::max(p.wp5_vel_boom_dps, 1e-6),
-      std::abs(ar6 - ar5) / std::max(p.wp5_vel_arm_dps, 1e-6)});
+      std::abs(bk6 - bk5) / std::max(p.unload_bucket_vel_dps, 1e-6),
+      std::abs(bo6 - bo5) / std::max(p.unload_boom_vel_dps, 1e-6),
+      std::abs(ar6 - ar5) / std::max(p.unload_arm_vel_dps, 1e-6)});
   const double t4 = t3 + t4_dur;
 
   // ---------- 打包（4 航路点）----------
