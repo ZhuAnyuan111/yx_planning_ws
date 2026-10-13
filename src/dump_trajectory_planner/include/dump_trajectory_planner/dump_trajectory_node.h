@@ -217,6 +217,7 @@ class DumpTrajectoryNode {
   double seg0_phase1_swing_dps_ = 15.0;    // Phase1 复合回转指令速率(deg/s)：boom 随动举升期间 swing 向 WP4 回转的速率（独立可调，实际受泵流量限制会滞后）
   double seg0_min_step_factor_ = 2.0;      // 小行程退化因子：boom 抬升量 < 该值×切换阈值 时退化为单段 PCHIP
   double seg0_swing_offset_deg_ = 15.0;    // swing Phase1 阶跃偏移角(deg)：目标 = WP4.swing − 偏移（沿回转方向）
+  double seg0_boom_pchip_start_cof_ = 0.5; // Phase1 boom 阶跃"中间角"比例∈[0,1]：mid = WP1.boom + cof·(WP4.boom − WP1.boom)；boom 阶跃到 mid 并保持（与 swing 解耦），swing 到位后 Phase2 时间 PCHIP 从 mid 收尾到 WP4
   double bucket_attitude_target_deg_ = -180.0;  // 铲斗姿态角目标（boom+arm+bucket），超过时调整 bucket
 
   // ---- 状态机 ----
@@ -242,14 +243,12 @@ class DumpTrajectoryNode {
   size_t seg_frame_idx_ = 0;
 
   // ---- Seg0 两阶段状态 ----
-  bool seg0_phase1_complete_ = false;      // Phase 1(回转+boom随动) 是否已完成，进入 Phase 2(PCHIP)
-  kinematics::JointState seg0_phase1_cmd_; // Phase 1 指令：boom=随swing进度插值抬升, arm 保持, swing=阶跃到"卡车附近"(WP4−offset), bucket 维持姿态
+  bool seg0_phase1_complete_ = false;      // Phase 1(swing 阶跃 + boom 阶跃到中间角保持) 是否已完成，进入 Phase 2(PCHIP)
+  kinematics::JointState seg0_phase1_cmd_; // Phase 1 指令：boom=阶跃到中间角并保持, arm 保持, swing=阶跃到"卡车附近"(WP4−offset), bucket 维持姿态
   double seg0_phase1_timeout_sec_ = 0.0;   // Phase 1 独立超时(s)=行程/wp2_vel_boom_dps×factor；超时转入高度门控 boost 重试
-  // Phase1 boom 随动插值状态（progress 单调不减，超调回摆不回退指令）
-  double seg0_p1_sw_start_rad_ = 0.0;      // Phase1 swing 起点（周期展开后）
-  double seg0_p1_boom_start_rad_ = 0.0;    // boom 插值起点（=WP1.boom）
-  double seg0_p1_boom_end_rad_ = 0.0;      // boom 插值终点（=段终点航路点.boom）
-  double seg0_p1_progress_ = 0.0;          // swing 回转进度 [0,1]（单调锁定）
+  // Phase1 boom 阶跃目标：mid = WP1.boom + cof·(WP4.boom − WP1.boom)，与 swing 进度解耦。
+  // boom 阶跃到 mid 并保持；swing 到位、高度门控通过后由 Phase2 时间 PCHIP 从 mid 收尾到 WP4。
+  double seg0_p1_boom_mid_rad_ = 0.0;      // Phase1 boom 阶跃目标角（中间角，rad）
 
   // ---- 门控自动提升状态 ----
   ros::Time gate_start_time_;              // 进入门控（或上次提升完成）的时刻
@@ -273,6 +272,9 @@ class DumpTrajectoryNode {
   int unload_bucket_far_count_ = 3;        // 前 N 斗选最远可达点
   int unload_bucket_mid_count_ = 3;        // 接下来 N 斗选中间可达点
   int unload_bucket_near_count_ = 2;       // 最后 N 斗选最近可达点，超出默认选中间
+
+  // 候选点可视化缓存（SelectUnloadPoint 填充，PlanWaypoints 发布到 dump_viz/candidates）
+  UnloadCandidateViz unload_cand_viz_;
 
   // 卡车位姿：从 /truck_center_unloadpoint 获取
   // x/y=卡车中心(base系,m)，w=RTK方位角α(deg)

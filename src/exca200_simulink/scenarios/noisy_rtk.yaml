@@ -13,9 +13,9 @@ bucket_number: 2.0
 
 gp_dig_joints:
   swing_deg: 180.0
-  boom_deg: 5.0
-  arm_deg: -110.0
-  bucket_deg: -110.0
+  boom_deg: 20.0
+  arm_deg: -30.0
+  bucket_deg: -30.0
 
 clean_dig_joints:
   swing_deg: 180.0

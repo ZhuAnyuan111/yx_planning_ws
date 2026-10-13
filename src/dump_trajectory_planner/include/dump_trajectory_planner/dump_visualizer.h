@@ -3,7 +3,7 @@
 /// @file dump_visualizer.h
 /// @brief 卸载轨迹规划节点可视化（RViz 实机联调辅助）。
 ///
-/// 持有 5 个可视化话题（frame_id 默认 base，受 visualization/enable 总开关控制）：
+/// 持有 6 个可视化话题（frame_id 默认 base，受 visualization/enable 总开关控制）：
 ///   dump_viz/truck     MarkerArray  卡车车厢包络线框 + 航向箭头 + 门控高度参考线
 ///                                    + 卸载点（激活时发布一次）
 ///   dump_viz/excavator MarkerArray  挖掘机臂架线段（回转中心→动臂销轴→动臂·斗杆铰
@@ -12,6 +12,8 @@
 ///                                    + 入厢点（激活时发布一次）
 ///   dump_viz/segment   MarkerArray  当前段局部轨迹折线（每段在线重规划时更新）
 ///   dump_viz/status    Marker       状态机调试文本（phase/段进度/门控次数/铲斗高度，高频发布）
+///   dump_viz/candidates MarkerArray 卸载候选点分布（可达亮蓝/不可达暗灰）+ far/mid/near
+///                                    代表点 + 选中卸载点（预校验/激活时发布一次）
 ///
 /// 设计约定：
 ///   - 臂架线段与 kinematics::KinematicsSolver::swing_center_forward 严格同源
@@ -34,6 +36,21 @@
 #include "dump_trajectory_planner/waypoint_generator.h"
 
 namespace dump_trajectory_planner {
+
+/// 卸载候选点可视化数据（由 DumpTrajectoryNode::SelectUnloadPoint 填充）
+/// - points / reachable 一一对应：全部候选点（index 0=最远, n-1=最近）及其 IK 可达标志
+/// - far/mid/near_idx：可达域三分代表点索引（“装满点”分层），-1 表示无效
+/// - selected_idx：按斗数三段式选中的卸载点索引，-1 表示无效
+/// - valid：有候选数据时置真；false 时清空图层
+struct UnloadCandidateViz {
+  std::vector<Point3> points;
+  std::vector<char> reachable;
+  int far_idx = -1;
+  int mid_idx = -1;
+  int near_idx = -1;
+  int selected_idx = -1;
+  bool valid = false;
+};
 
 class DumpVisualizer {
  public:
@@ -72,6 +89,11 @@ class DumpVisualizer {
   /// 状态机调试文本（固定悬浮于场景上方）
   void PublishStatus(const std::string& text);
 
+  /// 卸载候选点分布：全部候选点（可达亮蓝 / 不可达暗灰）+ 候选连线
+  /// + far/mid/near 三个代表点（“装满点”分层）+ 选中卸载点（金色大球+标签）；
+  /// cands.valid=false 或候选为空时清空该图层
+  void PublishUnloadCandidates(const UnloadCandidateViz& cands);
+
   /// 清空段轨迹层（执行结束/撤销时调用）
   void ClearSegmentTrajectory();
 
@@ -88,6 +110,7 @@ class DumpVisualizer {
   ros::Publisher pub_plan_;
   ros::Publisher pub_segment_;
   ros::Publisher pub_status_;
+  ros::Publisher pub_candidates_;
 };
 
 }  // namespace dump_trajectory_planner

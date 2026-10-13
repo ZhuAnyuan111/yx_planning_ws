@@ -25,14 +25,17 @@
 
 动作脚本（默认参数，可通过私有参数覆盖）
 ---------------------------------------
-以当前反馈姿态为起点，按四个关键帧插值：
-  KF0 (t=0)              : 当前姿态（挖掘起始）
-  KF1 (t=t_down)         : 下探到目标深度（boom 降低、arm 展开）
-  KF2 (t=t_down+t_curl)  : 收斗（bucket 大幅正转，模拟挖土）
-  KF3 (t=...+t_lift)     : 抬臂（boom 升高，保持斗内物料）
-  KF4 (t=...+t_hold)     : 保持（等待 swing 到卸载方位，本桩不动 swing）
+以触发时刻的实时反馈姿态 KF0 为起点，按标准反铲"远→近单向冲程"四关键帧插值
+（齿尖走向经 kinematics FK 验证，swing=180；joint 限位 boom[-25,50]/arm[-150,-30]/bucket[-135,30]）：
+  KF0 (t=0)              : 起点——斗杆完全打开(arm=-30 打开极限，齿尖 x≈11.2m)；由上游 gp_dig_joints 复位到此
+  KF1 (t=t_down)         : 内收下探——boom 下压 + arm 内收 + bucket 张开，齿尖 (10.55,-2.18)
+  KF2 (t=t_down+t_curl)  : 挖到最低——boom 压至 5°、arm 内收到 -80、bucket 张到 +10，齿尖最低 z≈-4.2m
+  KF3 (t=...+t_lift)     : 收兜回拉——bucket 由张转关翻卷兜土，齿尖 (5.18,-2.81)
+  KF4 (t=...+t_hold)     : 终点——斗杆垂直(θa=boom+arm=-90°)+铲斗端平(θk=boom+arm+bucket=-180°)，
+                           齿尖 x≈4.7m 身前收住、离坑抬起；姿态角-180 正好衔接 dump 维持的 bucket_attitude_target
 
-桩节点**不动 swing**（回转由后续 dump 阶段负责），仅操作 boom/arm/bucket。
+挖掘是一条"起点斗杆完全打开伸手够料、单向往机身内收回拉、终点收到斗杆垂直停在身前"的冲程；
+终点不回起点，dig→dump 交接由 dump planner 现读 dig 结束时的实时位姿，与本 dig 轨迹解耦。本桩不动 swing。
 """
 
 import threading
@@ -56,28 +59,36 @@ class DigPlannerStub:
         self.activate_value = float(rospy.get_param('~activate_value', 1.0))
         # 关键帧相对偏移（deg），基于当前反馈姿态叠加
         self.delta = {
-            'kf1': {  # 下探
-                'boom': float(rospy.get_param('~kf1_boom_delta_deg', -20.0)),
-                'arm': float(rospy.get_param('~kf1_arm_delta_deg', 20.0)),
-                'bucket': float(rospy.get_param('~kf1_bucket_delta_deg', 20.0)),
+            # 标准反铲"远→近单向冲程"四段（delta 为相对 KF0 起点的关节角叠加量，全程不动 swing）。
+            # KF0 起点由上游 gp_dig_joints 复位到"斗杆完全打开"的远位姿(boom20/arm-30/bucket-30，齿尖 x≈11.2)。
+            # 齿尖走向经 kinematics FK 验证：x 单调回收 11.2→4.7（远→近、终点不回起点）；
+            # boom 平滑下压[20→5]再微抬到 8；arm 从完全打开(-30)连续内收到斗杆垂直(θa=-90，arm-98)；
+            # bucket 张开到+10(切深)再收兜到-90(终点端平，姿态角-180)。
+            'kf1': {  # 内收下探：boom 下压 + arm 内收 + bucket 张开，往下方土里扎。
+                      # 齿尖 (11.22,0.42)→(10.55,-2.18)。
+                'boom': float(rospy.get_param('~kf1_boom_delta_deg', -8.0)),
+                'arm': float(rospy.get_param('~kf1_arm_delta_deg', -25.0)),
+                'bucket': float(rospy.get_param('~kf1_bucket_delta_deg', 25.0)),
             },
-            'kf2': {  # 收斗
-                'boom': float(rospy.get_param('~kf2_boom_delta_deg', -22.0)),
-                'arm': float(rospy.get_param('~kf2_arm_delta_deg', 35.0)),
-                'bucket': float(rospy.get_param('~kf2_bucket_delta_deg', 90.0)),
+            'kf2': {  # 挖到最低：boom 压到 5°、arm 内收到 -80、bucket 张到 +10（切削角）。
+                      # 齿尖 (10.55,-2.18)→(8.77,-4.20)，挖掘最低点 z≈-4.2m 出现在此帧。
+                'boom': float(rospy.get_param('~kf2_boom_delta_deg', -15.0)),
+                'arm': float(rospy.get_param('~kf2_arm_delta_deg', -50.0)),
+                'bucket': float(rospy.get_param('~kf2_bucket_delta_deg', 40.0)),
             },
-            'kf3': {  # 抬臂
-                'boom': float(rospy.get_param('~kf3_boom_delta_deg', 15.0)),
-                'arm': float(rospy.get_param('~kf3_arm_delta_deg', 25.0)),
-                'bucket': float(rospy.get_param('~kf3_bucket_delta_deg', 95.0)),
+            'kf3': {  # 收兜回拉：arm 继续内收接近垂直、bucket 由张转关翻卷兜土，把料往机身方向刮起。
+                      # 齿尖 (8.77,-4.20)→(5.18,-2.81)。
+                'boom': float(rospy.get_param('~kf3_boom_delta_deg', -12.0)),
+                'arm': float(rospy.get_param('~kf3_arm_delta_deg', -62.0)),
+                'bucket': float(rospy.get_param('~kf3_bucket_delta_deg', -40.0)),
             },
-            'kf4': {  # 收回到挖掘等待(carry)姿态：回到起点(相对偏移 0)。
-                      # 关键：使 dig→dump 交接位姿 = 单阶段 dump 的起始位姿
-                      # (swing=180/boom=5/arm=-110/bucket=-110)，否则 dump seg0
-                      # 高度门控从"伸展开斗"位姿够不到卡车顶，反复 boost 后 30s abort。
-                'boom': float(rospy.get_param('~kf4_boom_delta_deg', 0.0)),
-                'arm': float(rospy.get_param('~kf4_arm_delta_deg', 0.0)),
-                'bucket': float(rospy.get_param('~kf4_bucket_delta_deg', 0.0)),
+            'kf4': {  # 终点——斗杆垂直 + 铲斗端平：arm 收到 θa=boom+arm=-90°、bucket 使姿态角
+                      # θk=boom+arm+bucket=-180°(端平)、boom 微抬到 8°(绝对 8/-98/-90)，齿尖离坑
+                      # 抬起停在身前 (4.65,-1.79)，不回起点。姿态角-180 正好衔接 dump 维持的
+                      # bucket_attitude_target_deg=-180；KF4 无需归位 carry——交接由 dump 现读实时位姿。
+                'boom': float(rospy.get_param('~kf4_boom_delta_deg', -12.0)),
+                'arm': float(rospy.get_param('~kf4_arm_delta_deg', -68.0)),
+                'bucket': float(rospy.get_param('~kf4_bucket_delta_deg', -60.0)),
             },
         }
         # 各段时长（秒）
@@ -91,6 +102,19 @@ class DigPlannerStub:
         # 避免 plant 因速率限制尚未归位就交接给 dump。
         self.settle_tol_deg = float(rospy.get_param('~settle_tol_deg', 2.0))
         self.settle_max_sec = float(rospy.get_param('~settle_max_sec', 6.0))
+
+        # 关节限位（deg，与 dump/URDF 一致）：dig 全程绝对目标——尤其终点 KF4=dump 的 WP1
+        # ——必须落在限位内，否则 dump 会因 WP1 越限、修正量 > waypoint_clamp_abort_deg(5°) 直接 abort。
+        # 桩的 delta 是相对实时 KF0 叠加，若 dig 在 reset 未归位时触发（KF0 非名义远位姿 arm=-30），
+        # 绝对终点可能越限，故对每个关键帧绝对角做裁剪兜底（名义循环裁剪为 no-op，不改变设计姿态）。
+        self.joint_limits = {
+            'boom': (float(rospy.get_param('~boom_min_deg', -25.0)),
+                     float(rospy.get_param('~boom_max_deg', 50.0))),
+            'arm': (float(rospy.get_param('~arm_min_deg', -150.0)),
+                    float(rospy.get_param('~arm_max_deg', -30.0))),
+            'bucket': (float(rospy.get_param('~bucket_min_deg', -135.0)),
+                       float(rospy.get_param('~bucket_max_deg', 30.0))),
+        }
 
         self.rate_hz = float(rospy.get_param('~publish_rate', 20.0))
 
@@ -206,6 +230,13 @@ class DigPlannerStub:
         kf3 = {k: start[k] + self.delta['kf3'][k] for k in ('boom', 'arm', 'bucket')}
         kf4 = {k: start[k] + self.delta['kf4'][k] for k in ('boom', 'arm', 'bucket')}
 
+        # 关节限位裁剪：保证每个关键帧绝对角（含终点 KF4=dump 的 WP1）落在限位内。
+        # 线性插值两端均已裁剪 ⇒ 中间目标必在限位内（区间凸），末尾再兜底裁剪一次。
+        for kf in (kf0, kf1, kf2, kf3, kf4):
+            for k in ('boom', 'arm', 'bucket'):
+                lo, hi = self.joint_limits[k]
+                kf[k] = min(max(kf[k], lo), hi)
+
         if t < self.t_down:
             a = t / max(self.t_down, 1e-6)
             tgt = {k: _lerp(kf0[k], kf1[k], a) for k in kf0}
@@ -219,6 +250,9 @@ class DigPlannerStub:
             a = min(1.0, (t - self.t_down - self.t_curl - self.t_lift)
                     / max(self.t_hold, 1e-6))
             tgt = {k: _lerp(kf3[k], kf4[k], a) for k in kf3}
+        for k in ('boom', 'arm', 'bucket'):
+            lo, hi = self.joint_limits[k]
+            tgt[k] = min(max(tgt[k], lo), hi)
         tgt['swing'] = swing
         return tgt
 

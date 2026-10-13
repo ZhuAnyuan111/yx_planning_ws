@@ -156,6 +156,10 @@ void DumpTrajectoryNode::LoadParams() {
       pnh_.param("online_plan/seg0_min_step_factor", 2.0);
   seg0_swing_offset_deg_ =
       pnh_.param("online_plan/seg0_swing_offset_deg", 15.0);
+  seg0_boom_pchip_start_cof_ =
+      std::clamp(static_cast<double>(
+                     pnh_.param("online_plan/seg0_boom_pchip_start_cof", 0.5)),
+                 0.0, 1.0);
 
   // ---- 动态卸载点选取 ----
   unload_selector_enable_ =
@@ -318,6 +322,9 @@ bool DumpTrajectoryNode::SelectUnloadPoint(FeasibilityResult& fr) {
     FeasibilityResult result;
   };
   std::vector<Candidate> candidates(n);
+  unload_cand_viz_ = UnloadCandidateViz{};  // 重置可视化缓存
+  unload_cand_viz_.points.reserve(n);
+  unload_cand_viz_.reachable.reserve(n);
   for (int i = 0; i < n; ++i) {
     const double t = static_cast<double>(i) / (n - 1);  // 0=远, 1=近
     candidates[i].point.x =
@@ -325,6 +332,7 @@ bool DumpTrajectoryNode::SelectUnloadPoint(FeasibilityResult& fr) {
     candidates[i].point.y =
         unload_point_far_.y + t * (unload_point_.y - unload_point_far_.y);
     candidates[i].point.z = unload_point_.z;  // 候选点高度 = 近点 RTK 高度
+    unload_cand_viz_.points.push_back(candidates[i].point);
   }
 
   // 逐候选验证可达性（由远及近）
@@ -333,7 +341,10 @@ bool DumpTrajectoryNode::SelectUnloadPoint(FeasibilityResult& fr) {
     candidates[i].result =
         CheckReachable(candidates[i].point, feasibility_params_, *solver_);
     if (candidates[i].result.reachable) ++feasible_count;
+    unload_cand_viz_.reachable.push_back(candidates[i].result.reachable ? 1 : 0);
   }
+  // 候选分布可视化（即便全不可达也发布，便于诊断可达域边界）
+  unload_cand_viz_.valid = true;
   if (feasible_count == 0) {
     ROS_WARN("[dump_traj] no feasible candidate among %d points "
              "(shared z=%.2f m | near=(%.2f,%.2f) far=(%.2f,%.2f))",
@@ -373,6 +384,10 @@ bool DumpTrajectoryNode::SelectUnloadPoint(FeasibilityResult& fr) {
            candidates[mid_feasible].point.y,
            near_idx, candidates[near_idx].point.x, candidates[near_idx].point.y);
 
+  unload_cand_viz_.far_idx = far_idx;
+  unload_cand_viz_.mid_idx = mid_feasible;
+  unload_cand_viz_.near_idx = near_idx;
+
   // 按斗数选取：前 far_count 斗→最远，中间 mid_count 斗→中间，
   // 后 near_count 斗→最近，超出→中间
   const int bn = bucket_number_valid_ ? bucket_number_ : 0;
@@ -397,6 +412,7 @@ bool DumpTrajectoryNode::SelectUnloadPoint(FeasibilityResult& fr) {
 
   unload_point_ = candidates[selected_idx].point;
   fr = candidates[selected_idx].result;
+  unload_cand_viz_.selected_idx = selected_idx;
   ROS_INFO("[dump_traj] bucket #%d -> selected %s point #%d (%.2f, %.2f)",
            bn, selected_label, selected_idx,
            unload_point_.x, unload_point_.y);
@@ -450,6 +466,7 @@ bool DumpTrajectoryNode::PlanWaypoints() {
   // 动态卸载点选取：启用且远点有效时，在近点与远点之间按斗数选取
   FeasibilityResult fr;
   bool use_dynamic = false;
+  unload_cand_viz_ = UnloadCandidateViz{};  // 每次规划从干净状态开始（单点模式清空图层）
   if (unload_selector_enable_ && unload_far_valid_) {
     use_dynamic = SelectUnloadPoint(fr);
     if (!use_dynamic) {
@@ -558,6 +575,7 @@ bool DumpTrajectoryNode::PlanWaypoints() {
   visualizer_.PublishPlan(waypoints_, current_joint_, fr.unload_joint,
                           unload_point_, truck_pose_, waypoint_params_,
                           *solver_);
+  visualizer_.PublishUnloadCandidates(unload_cand_viz_);
   return true;
 }
 
@@ -675,33 +693,11 @@ void DumpTrajectoryNode::TimerCallback(const ros::TimerEvent& /*event*/) {
     case DumpPhase::kExecutingSegment: {
       // ---- Seg0 Phase 1：阶跃段特殊处理 ----
       if (current_seg_idx_ == 0 && !seg0_phase1_complete_) {
-        // boom 随 swing 回转进度连续抬升（swing-synced ramp）：
-        // 以 Phase1 swing 目标为基准把实测 swing 展开到同一周期，
-        // progress = (now−start)/(target−start)，clamp 后单调锁定
-        // （超调回摆不回退 boom 指令）；boom 指令再按 wp2_vel_boom_dps 限速，
-        // 防止 swing 快速推进时 boom 指令斜率超液压能力。
-        {
-          const double sw_target = seg0_phase1_cmd_.swing;
-          const double sw_now =
-              sw_target + NormalizeRadToPi(current_joint_.swing - sw_target);
-          const double travel = sw_target - seg0_p1_sw_start_rad_;
-          double progress = 1.0;
-          if (std::abs(travel) > 1e-9) {
-            progress = std::clamp(
-                (sw_now - seg0_p1_sw_start_rad_) / travel, 0.0, 1.0);
-          }
-          seg0_p1_progress_ = std::max(seg0_p1_progress_, progress);
-          const double boom_start_deg = Rad2Deg(seg0_p1_boom_start_rad_);
-          const double boom_end_deg = Rad2Deg(seg0_p1_boom_end_rad_);
-          const double boom_target_deg = boom_start_deg +
-              seg0_p1_progress_ * (boom_end_deg - boom_start_deg);
-          const double max_step_deg =
-              waypoint_params_.wp2_vel_boom_dps / publish_rate_hz_;
-          const double prev_deg = Rad2Deg(seg0_phase1_cmd_.boom);
-          const double step_deg = std::clamp(boom_target_deg - prev_deg,
-                                             -max_step_deg, max_step_deg);
-          seg0_phase1_cmd_.boom = Deg2Rad(prev_deg + step_deg);
-        }
+        // boom 与 swing 解耦（用户规格）：Phase1 期间 boom 指令恒为 PlanCurrentSegment
+        // 预算的"中间角" seg0_p1_boom_mid_rad_ = WP1.boom + cof·(WP4.boom − WP1.boom)，
+        // 即进入 dump 时 boom 直接阶跃到该中间角并保持（plant 按液压能力快速抬升）；
+        // 待 swing 阶跃到位、高度门控通过后，由 Phase2 的时间 PCHIP 从中间角平滑收尾到 WP4。
+        seg0_phase1_cmd_.boom = seg0_p1_boom_mid_rad_;
         // bucket 实时姿态保持（用户规格）：每帧用实测 boom/arm 反馈角计算维持目标姿态角
         // 所需的参考 bucket 角并输出（非规划期算死的理论值）。单向约束：仅当姿态角 >=
         // 目标时回调收斗到 bucket_hold；否则保持上一帧参考（起点为 seg_start.bucket），
@@ -715,7 +711,7 @@ void DumpTrajectoryNode::TimerCallback(const ros::TimerEvent& /*event*/) {
               waypoint_params_.bucket_limit_lower_deg,
               std::min(waypoint_params_.bucket_limit_upper_deg, Rad2Deg(bucket_hold_rad))));
         }
-        // 发布指令（boom=随swing进度插值抬升, arm 保持不变, swing=阶跃到"卡车附近", bucket 实时维持姿态）
+        // 发布指令（boom=阶跃到中间角并保持, arm 保持不变, swing=阶跃到"卡车附近", bucket 实时维持姿态）
         PublishTrajectoryFrame(seg0_phase1_cmd_, true);
         // 检查 swing 是否到达"卡车附近"阈值内（决策 3：不管 boom 是否到位，swing 到位必须检查高度）
         const double swing_err_deg = ShortestAngularDistanceDeg(
@@ -985,13 +981,14 @@ void DumpTrajectoryNode::PlanCurrentSegment() {
     seg0_phase1_complete_ = !seg0_two_phase;
     if (seg0_two_phase) {
       seg0_phase1_cmd_ = seg_start;  // arm/bucket/swing/boom 先继承起点
-      // boom 随 swing 回转进度连续插值（替代旧"阶跃到中点后保持"）：
-      // 从起点角到段终点角同步抬升，避免 Phase1 期间 boom 停在中点不动、
-      // 齿尖高度不足导致门控空转 boost；回转到位时 boom 已接近段终点高度。
-      seg0_p1_sw_start_rad_ = seg_start.swing;
-      seg0_p1_boom_start_rad_ = seg_start.boom;
-      seg0_p1_boom_end_rad_ = seg_end.boom;
-      seg0_p1_progress_ = 0.0;
+      // boom 阶跃到"中间角"（与 swing 进度解耦，替代旧"随 swing 进度连续插值抬升"）：
+      // mid = WP1.boom + cof·(WP4.boom − WP1.boom)，cof∈[0,1] 可配。Phase1 期间 boom
+      // 指令恒为 mid（进入 dump 即阶跃，plant 按液压能力快速抬升并保持）；待 swing 阶跃
+      // 到位、高度门控通过后，由 Phase2 的时间 PCHIP 从 mid 平滑收尾到 WP4。
+      const double boom_cof = std::clamp(seg0_boom_pchip_start_cof_, 0.0, 1.0);
+      seg0_p1_boom_mid_rad_ =
+          seg_start.boom + boom_cof * (seg_end.boom - seg_start.boom);
+      seg0_phase1_cmd_.boom = seg0_p1_boom_mid_rad_;  // boom 阶跃指令
       // arm 在 Phase1 保持不变（用户规格）：boom 抬升阶段斗杆不动，待 swing 到位
       // 后于 Phase2 再外伸到段终点。既避免 boom(高压举升)+arm 同帧饱和抢泵流量，
       // 又符合"先抬升跨越、到位再外伸入厢"的卸载动作顺序。
@@ -1079,10 +1076,14 @@ void DumpTrajectoryNode::PlanCurrentSegment() {
   confirm_count_ = 0;
 
   if (current_seg_idx_ == 0 && seg0_two_phase) {
-    ROS_INFO("[dump_traj] segment 0 planned (two-phase): boom ramp %.1f->%.1f deg "
-             "(swing-synced), arm held %.1f deg, swing step %.1f->%.1f deg (offset=%.1f), "
-             "threshold=%.1f deg, phase1_timeout=%.2fs, time=%.2fs",
+    ROS_INFO("[dump_traj] segment 0 planned (two-phase): boom step %.1f->%.1f deg "
+             "(cof=%.2f, swing-decoupled; Phase2 PCHIP %.1f->%.1f), arm held %.1f deg, "
+             "swing step %.1f->%.1f deg (offset=%.1f), threshold=%.1f deg, "
+             "phase1_timeout=%.2fs, time=%.2fs",
              Rad2Deg(seg_start.boom),
+             Rad2Deg(seg0_p1_boom_mid_rad_),
+             seg0_boom_pchip_start_cof_,
+             Rad2Deg(seg0_p1_boom_mid_rad_),
              Rad2Deg(seg_end.boom),
              Rad2Deg(seg0_phase1_cmd_.arm),
              Rad2Deg(seg_start.swing),
@@ -1364,14 +1365,19 @@ bool DumpTrajectoryNode::ValidateWaypointsJointLimits() {
   const auto& limits = solver_->limits();
   bool all_ok = true;
 
-  // 单个关节校验：超限 clamp；修正量超阈值 → 上游不可信，标记终止
+  // 单个关节校验：超限 clamp；修正量超阈值 → 上游不可信，标记终止。
+  // abort_on_exceed=false 时只 clamp+WARN 不终止：用于 bucket——铲斗姿态偏差
+  // 几度对卸载影响小，且中间航路点铲斗常略超限位（如 -140→-135，fix 5.3°），
+  // 不应因此让整个卸载规划失败、流程卡死。boom/arm 仍保留 abort（大幅超限意味
+  // 着 IK 解根本不可达，臂架姿态错误严重，必须拦下）。
   auto clamp_joint = [&](double& q_rad, double lo, double hi,
-                         size_t wp_idx, const char* name) {
+                         size_t wp_idx, const char* name,
+                         bool abort_on_exceed) {
     const double deg = Rad2Deg(q_rad);
     if (deg >= lo && deg <= hi) return;
     const double clamped = std::max(lo, std::min(hi, deg));
     const double fix = std::abs(clamped - deg);
-    if (fix > waypoint_clamp_abort_deg_) {
+    if (abort_on_exceed && fix > waypoint_clamp_abort_deg_) {
       ROS_ERROR("[dump_traj] WP%zu %s=%.1f deg out of [%.1f, %.1f], "
                 "clamp fix %.1f deg > abort threshold %.1f deg",
                 wp_idx + 1, name, deg, lo, hi, fix,
@@ -1379,17 +1385,19 @@ bool DumpTrajectoryNode::ValidateWaypointsJointLimits() {
       all_ok = false;
     } else {
       ROS_WARN("[dump_traj] WP%zu %s=%.1f deg out of [%.1f, %.1f], "
-               "clamped to %.1f",
-               wp_idx + 1, name, deg, lo, hi, clamped);
+               "clamped to %.1f (fix %.1f deg%s)",
+               wp_idx + 1, name, deg, lo, hi, clamped, fix,
+               abort_on_exceed ? "" : ", bucket tolerated");
     }
     q_rad = Deg2Rad(clamped);
   };
 
   for (size_t i = 0; i < waypoints_.size(); ++i) {
     auto& q = waypoints_[i];
-    clamp_joint(q.boom, limits.boom_lower, limits.boom_upper, i, "boom");
-    clamp_joint(q.arm, limits.arm_lower, limits.arm_upper, i, "arm");
-    clamp_joint(q.bucket, limits.bucket_lower, limits.bucket_upper, i, "bucket");
+    clamp_joint(q.boom, limits.boom_lower, limits.boom_upper, i, "boom", true);
+    clamp_joint(q.arm, limits.arm_lower, limits.arm_upper, i, "arm", true);
+    clamp_joint(q.bucket, limits.bucket_lower, limits.bucket_upper, i, "bucket",
+                false);
   }
 
   return all_ok;

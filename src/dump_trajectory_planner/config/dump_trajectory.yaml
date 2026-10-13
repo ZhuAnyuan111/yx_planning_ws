@@ -126,8 +126,8 @@ online_plan:
   waypoint_clamp_abort_deg: 5.0
 
   # ---- Seg0 两阶段策略参数 ----
-  # Phase1 = swing 快速回转 + boom 随回转进度连续插值抬升（替代旧"阶跃中点保持"）；
-  # swing 到达目标后检查高度门控，通过则 Phase2 PCHIP 收尾到段终点
+  # Phase1 = swing 阀口饱和阶跃快转 + boom 直接阶跃到"中间角"并保持（与 swing 进度解耦）；
+  # swing 到达目标后检查高度门控，通过则 Phase2 时间 PCHIP 从中间角平滑收尾到 WP4
   # swing 到达 Phase1 目标 ±阈值(deg)后检查高度门控
   seg0_switch_threshold_deg: 3.0
   # Phase1 复合回转指令速率(deg/s)：Phase1 期间 swing 向段终点回转的速率。
@@ -139,6 +139,11 @@ online_plan:
   # swing 到达此"卡车附近"角度后检查高度门控，通过则 Phase2 PCHIP 平滑收尾到 WP4
   # 调大→Phase1 行程长(更多满功率回转)、Phase2 收尾短；调小→反之
   seg0_swing_offset_deg: 15.0
+  # Phase1 boom 阶跃"中间角"比例系数 cof∈[0,1]：进入 dump 后 boom 直接阶跃到
+  #   mid = WP1.boom + cof·(WP4.boom − WP1.boom)，与 swing 进度解耦；
+  #   swing 阶跃到位、高度门控通过后由 Phase2 时间 PCHIP 从 mid 平滑收尾到 WP4。
+  #   0=不抬(停在实时角)、1=直接阶跃到 WP4 高度；调大→Phase1 抬得越高(跨越厢帮越安全)
+  seg0_boom_pchip_start_cof: 0.5
   # 铲斗姿态角目标（boom+arm+bucket，有符号 deg）：Phase1 每帧按实测 boom/arm 反馈
   # 计算参考 bucket 维持该姿态；当前姿态角 >= 该值时才回调收斗（单向，不反向张斗）
   bucket_attitude_target_deg: -180.0

@@ -35,11 +35,11 @@ sigma_bucket_deg: 0.0
 # 环形缓冲实现；0 = 无延迟
 feedback_delay_ms: 0.0
 
-# ===== 初始位姿（挖掘终止姿态，deg）=====
+# ===== 初始位姿（= 挖掘起始远位姿 gp_dig_joints：斗杆完全打开，dig 从此起步，deg）=====
 init_swing_deg: 180.0
-init_boom_deg: 5.0
-init_arm_deg: -110.0
-init_bucket_deg: -110.0
+init_boom_deg: 20.0
+init_arm_deg: -30.0
+init_bucket_deg: -30.0
 
 # ===== 完成判定（供 /plant/settled 与 sequencer 参考）=====
 settle_tol_deg: 3.0

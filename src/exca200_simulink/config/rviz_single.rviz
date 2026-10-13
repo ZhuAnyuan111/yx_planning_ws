@@ -126,6 +126,14 @@ Visualization Manager:
       Value: true
     - Class: rviz/MarkerArray
       Enabled: true
+      Marker Topic: /dump_viz/candidates
+      Name: Candidates(unload pts)
+      Namespaces:
+        {}
+      Queue Size: 100
+      Value: true
+    - Class: rviz/MarkerArray
+      Enabled: true
       Marker Topic: /dump_viz/segment
       Name: Segment(traj)
       Namespaces:

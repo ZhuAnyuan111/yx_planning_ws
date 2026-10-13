@@ -18,9 +18,9 @@ bucket_number: 2.0
 # ===== 下一挖掘点关节角目标（供 reset planner 消费 /GP_dig_joints）=====
 gp_dig_joints:
   swing_deg: 180.0
-  boom_deg: 5.0
-  arm_deg: -110.0
-  bucket_deg: -110.0
+  boom_deg: 20.0
+  arm_deg: -30.0
+  bucket_deg: -30.0
 
 # ===== 搭台模式目标关节角（供 reset planner 消费 /clean_digPoint）=====
 clean_dig_joints:

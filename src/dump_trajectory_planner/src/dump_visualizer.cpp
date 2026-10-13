@@ -96,6 +96,8 @@ DumpVisualizer::DumpVisualizer(ros::NodeHandle& nh, ros::NodeHandle& pnh) {
   pub_plan_ = nh.advertise<visualization_msgs::MarkerArray>("dump_viz/plan", 1);
   pub_segment_ = nh.advertise<visualization_msgs::MarkerArray>("dump_viz/segment", 1);
   pub_status_ = nh.advertise<visualization_msgs::Marker>("dump_viz/status", 1);
+  pub_candidates_ =
+      nh.advertise<visualization_msgs::MarkerArray>("dump_viz/candidates", 1);
 
   ROS_INFO("[dump_viz] visualizer %s (frame=%s)",
            enabled_ ? "enabled" : "disabled", frame_id_.c_str());
@@ -292,6 +294,11 @@ void DumpVisualizer::PublishPlan(
   SetColor(wp_line, 1.0, 1.0, 1.0, 0.55);
   wp_line.scale.x = 0.04;
 
+  // 4 航路点版 {WP1,WP4,WP5,WP6}（下标 0..3）；标签沿用节点日志的索引命名
+  // WP1/WP2/WP3/WP4（= 起点/厢上过渡/卸载过渡/终点），避免 RViz 与日志命名冲突；
+  // 配色按语义角色区分。is4 判定兼容旧 >4 点全序列布局。
+  const bool is4 = (waypoints.size() == 4);
+
   for (size_t i = 0; i < waypoints.size(); ++i) {
     const auto pose = solver.swing_center_forward(waypoints[i]);
     const geometry_msgs::Point p = Pt(pose.x, pose.y, pose.z);
@@ -299,14 +306,15 @@ void DumpVisualizer::PublishPlan(
 
     auto m = MakeBase("wp", static_cast<int>(i) * 2,
                       visualization_msgs::Marker::SPHERE);
-    if (i == 0) {
-      SetColor(m, 0.1, 0.9, 0.2);                    // WP1 起点：绿
-    } else if (i == waypoints.size() - 1) {
-      SetColor(m, 1.0, 0.2, 0.2);                    // WP6 终点：红
-    } else if (i == 3) {
-      SetColor(m, 0.2, 0.5, 1.0);                    // WP4 厢上过渡：蓝
+    if (is4) {
+      if (i == 0) SetColor(m, 0.1, 0.9, 0.2);        // 起点：绿
+      else if (i == 1) SetColor(m, 0.2, 0.5, 1.0);   // 厢上过渡：蓝
+      else if (i == 2) SetColor(m, 1.0, 0.8, 0.0);   // 卸载过渡：黄
+      else SetColor(m, 1.0, 0.2, 0.2);               // 终点：红
     } else {
-      SetColor(m, 1.0, 0.8, 0.0);                    // 其余：黄
+      if (i == 0) SetColor(m, 0.1, 0.9, 0.2);
+      else if (i == waypoints.size() - 1) SetColor(m, 1.0, 0.2, 0.2);
+      else SetColor(m, 1.0, 0.8, 0.0);
     }
     m.scale.x = m.scale.y = m.scale.z = 0.24;
     m.pose.position = p;
@@ -316,7 +324,7 @@ void DumpVisualizer::PublishPlan(
                       visualization_msgs::Marker::TEXT_VIEW_FACING);
     SetColor(t, 1.0, 1.0, 1.0);
     t.scale.z = 0.32;
-    t.text = "WP" + std::to_string(i + 1);
+    t.text = "WP" + std::to_string(i + 1);  // 索引命名，与节点日志 WP1..WP4 一致
     t.pose.position = Pt(p.x, p.y, p.z + 0.4);
     arr.markers.push_back(t);
   }
@@ -354,8 +362,10 @@ void DumpVisualizer::PublishPlan(
   }
 
   // ---- 入厢点（WP4 齿尖 xy，蓝球 + 垂线）----
-  if (waypoints.size() > 3) {
-    const auto wp4 = solver.swing_center_forward(waypoints[3]);
+  // 4 航路点版 WP4 在下标 1；旧 >4 点全序列版在末点前（下标 3）。
+  const size_t wp4_idx = is4 ? 1u : 3u;
+  if (waypoints.size() > wp4_idx) {
+    const auto wp4 = solver.swing_center_forward(waypoints[wp4_idx]);
     auto m = MakeBase("entry_point", 102, visualization_msgs::Marker::SPHERE);
     SetColor(m, 0.2, 0.5, 1.0);
     m.scale.x = m.scale.y = m.scale.z = 0.2;
@@ -422,6 +432,94 @@ void DumpVisualizer::PublishStatus(const std::string& text) {
   m.text = text;
   m.pose.position = Pt(0.0, 0.0, 7.5);
   pub_status_.publish(m);
+}
+
+// ==================== 卸载候选点分布 ====================
+
+void DumpVisualizer::PublishUnloadCandidates(const UnloadCandidateViz& c) {
+  if (!enabled_) return;
+
+  visualization_msgs::MarkerArray arr;
+
+  // 无有效候选：清空本图层（DELETEALL 覆盖该话题全部 ns）
+  if (!c.valid || c.points.empty()) {
+    auto del = MakeBase("cand", 0, visualization_msgs::Marker::SPHERE_LIST);
+    del.action = visualization_msgs::Marker::DELETEALL;
+    arr.markers.push_back(del);
+    pub_candidates_.publish(arr);
+    return;
+  }
+
+  // ---- 全部候选点：可达（亮蓝，较大）/ 不可达（暗灰，较小）分列 ----
+  {
+    auto ok = MakeBase("cand_reachable", 0,
+                       visualization_msgs::Marker::SPHERE_LIST);
+    SetColor(ok, 0.35, 0.65, 1.0, 0.95);
+    ok.scale.x = ok.scale.y = ok.scale.z = 0.16;
+    auto ng = MakeBase("cand_unreachable", 0,
+                       visualization_msgs::Marker::SPHERE_LIST);
+    SetColor(ng, 0.40, 0.40, 0.40, 0.70);
+    ng.scale.x = ng.scale.y = ng.scale.z = 0.11;
+    for (size_t i = 0; i < c.points.size(); ++i) {
+      const bool r = (i < c.reachable.size()) ? (c.reachable[i] != 0) : false;
+      const Point3& p = c.points[i];
+      if (r) {
+        ok.points.push_back(Pt(p.x, p.y, p.z));
+      } else {
+        ng.points.push_back(Pt(p.x, p.y, p.z));
+      }
+    }
+    arr.markers.push_back(ok);
+    arr.markers.push_back(ng);
+  }
+
+  // ---- 候选连线（far→near 顺序，示意布料方向）----
+  {
+    auto ln = MakeBase("cand_line", 0, visualization_msgs::Marker::LINE_STRIP);
+    SetColor(ln, 1.0, 1.0, 1.0, 0.25);
+    ln.scale.x = 0.02;
+    for (const Point3& p : c.points) ln.points.push_back(Pt(p.x, p.y, p.z));
+    arr.markers.push_back(ln);
+  }
+
+  // ---- far/mid/near 代表点（“装满点”分层）+ 选中卸载点（大球 + 标签）----
+  struct Rep {
+    int idx;
+    const char* ns;
+    const char* label;
+    double r, g, b;
+    bool selected;
+  };
+  const Rep reps[4] = {
+      {c.far_idx, "cand_far", "FAR", 0.75, 0.35, 1.00, false},    // 紫：最远可达
+      {c.mid_idx, "cand_mid", "MID", 1.00, 0.60, 0.05, false},    // 橙：中间可达
+      {c.near_idx, "cand_near", "NEAR", 0.05, 0.85, 0.85, false},  // 青：最近可达
+      {c.selected_idx, "cand_selected", "UNLOAD", 1.00, 0.85, 0.05, true},  // 金：选中
+  };
+  for (int k = 0; k < 4; ++k) {
+    const int idx = reps[k].idx;
+    if (idx < 0 || idx >= static_cast<int>(c.points.size())) continue;
+    const Point3& p = c.points[idx];
+
+    auto m = MakeBase(reps[k].ns, 0, visualization_msgs::Marker::SPHERE);
+    SetColor(m, reps[k].r, reps[k].g, reps[k].b, reps[k].selected ? 1.0 : 0.9);
+    const double scale = reps[k].selected ? 0.60 : 0.44;
+    m.scale.x = m.scale.y = m.scale.z = scale;
+    m.pose.position = Pt(p.x, p.y, p.z);
+    arr.markers.push_back(m);
+
+    auto t = MakeBase(reps[k].ns, 1,
+                      visualization_msgs::Marker::TEXT_VIEW_FACING);
+    SetColor(t, reps[k].r, reps[k].g, reps[k].b);
+    t.scale.z = reps[k].selected ? 0.42 : 0.34;
+    char buf[48];
+    snprintf(buf, sizeof(buf), "%s #%d", reps[k].label, idx);
+    t.text = buf;
+    t.pose.position = Pt(p.x, p.y, p.z + (reps[k].selected ? 0.80 : 0.58));
+    arr.markers.push_back(t);
+  }
+
+  pub_candidates_.publish(arr);
 }
 
 }  // namespace dump_trajectory_planner

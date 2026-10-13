@@ -1,8 +1,8 @@
 update_rate_hz: 10.0
 
 thresholds:
-  bucket_numbers_threshold_low: 1
-  bucket_numbers_threshold_high: 1
+  bucket_numbers_threshold_low: 5
+  bucket_numbers_threshold_high: 10
 
 timing:
   truck_event_stale_sec: 2.0

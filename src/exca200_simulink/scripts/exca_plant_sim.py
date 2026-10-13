@@ -79,11 +79,11 @@ def _default_params():
     """内置默认值：与旧 exec_sim.py 完全一致，保证向后兼容。"""
     p = {
         'publish_rate_hz': 50.0,
-        # 初始位姿（挖掘终止姿态）
+        # 初始位姿（= 挖掘起始远位姿 gp_dig_joints：斗杆完全打开）
         'init_swing_deg': 180.0,
-        'init_boom_deg': 5.0,
-        'init_arm_deg': -110.0,
-        'init_bucket_deg': -110.0,
+        'init_boom_deg': 20.0,
+        'init_arm_deg': -30.0,
+        'init_bucket_deg': -30.0,
         # 完成判定
         'settle_tol_deg': 3.0,
         'settle_dur_sec': 0.5,

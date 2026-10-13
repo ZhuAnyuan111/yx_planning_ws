@@ -188,7 +188,7 @@ cd src/exca200_simulink && python3 tests/test_dump_regression.py
 
 ## 状态与已知限制
 
-1. **dig 为桩**：跑固定 KF1→KF4 动作（末尾回 carry），真实 `dig_trajectory_planner`（纯库 `dig_planner_dp`）尚未接入闭环。
+1. **dig 为桩**：以触发时刻实时姿态为 KF0，按 delta 叠加跑"远→近单向冲程"四段关键帧（起点=斗杆完全打开伸手够料、终点=斗杆垂直 θa=−90° + 铲斗端平 θk=−180°，**末尾不回 carry**）；关键帧绝对角按关节限位裁剪兜底，保证终点（=dump 的 WP1）不越限。dig→dump 由 dump planner 现读 dig 实时终点解耦交接。真实 `dig_trajectory_planner`（纯库 `dig_planner_dp`）尚未接入闭环。起点位姿由 `gp_dig_joints`（scenario）与 `plant.yaml` 初始位姿共同决定，需同步。
 2. **truck_dump 仅可视化**：只发 marker，不发 `RefDeviceTraj_*`，不进 plant 闭环。
 3. **`kpi_collector` 未默认挂 `full_cycle_sim`**：decision 路径通过终端日志观测，`metrics/*.csv` 需手动 `rosrun`。
 4. **`use_sim_time` 关闭**：走 wall-clock；加速需引入 `sim_clock.py`。
