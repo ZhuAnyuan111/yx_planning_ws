@@ -1258,14 +1258,16 @@ double DumpTrajectoryNode::ComputeSegError(int seg_idx) const {
              std::max(seg1_swing_tolerance_deg_, 1e-6);
     }
     default: {
-      // WP5→WP6：斗杆 + 铲斗 逐关节达标
-      const double arm_ratio =
-          std::abs(Rad2Deg(cur.arm - target.arm)) /
-          std::max(seg2_arm_tolerance_deg_, 1e-6);
-      const double bkt_ratio =
-          std::abs(Rad2Deg(cur.bucket - target.bucket)) /
-          std::max(seg2_bucket_tolerance_deg_, 1e-6);
-      return std::max(arm_ratio, bkt_ratio);
+      // WP5→WP6（最终卸载段）：卸载是铲斗“单向开启”过程，完成判据改为——
+      //   实际铲斗角 ≥ 规划卸载角即判阶段结束（料已卸出）；不使用绝对值容差、不再检查斗杆(arm)，
+      //   允许过冲（实际 > 规划）同样达标，避免过冲后 |Δ| 变大反而迟迟不完成。
+      //   返回值 <=1.0 表示达标；未达标时用 seg2_bucket_tolerance_deg_ 归一化“还差多少”并整体 +1，
+      //   保证 >1.0（完成阈值），同时便于日志观察剩余角。
+      const double bkt_remaining_deg =
+          Rad2Deg(target.bucket) - Rad2Deg(cur.bucket);  // >0：尚未开启到规划卸载角
+      if (bkt_remaining_deg <= 0.0) return 0.0;          // 已达到/超过规划角 → 完成
+      return 1.0 + bkt_remaining_deg /
+             std::max(seg2_bucket_tolerance_deg_, 1e-6);
     }
   }
 }

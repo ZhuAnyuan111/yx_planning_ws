@@ -196,8 +196,8 @@ class DumpTrajectoryNode {
   double seg0_boom_tolerance_deg_ = 5.0;        // WP1→WP4：动臂
   bool seg0_height_gate_ = true;                // WP1→WP4：是否同时要求铲斗高于卡车上表面
   double seg1_swing_tolerance_deg_ = 5.0;       // WP4→WP5：仅判断回转
-  double seg2_arm_tolerance_deg_ = 10.0;        // WP5→WP6：斗杆
-  double seg2_bucket_tolerance_deg_ = 20.0;     // WP5→WP6：铲斗
+  double seg2_arm_tolerance_deg_ = 10.0;        // [已停用] WP5→WP6 完成不再检查斗杆(arm)
+  double seg2_bucket_tolerance_deg_ = 20.0;     // WP5→WP6：铲斗单向判据(实际≥规划即完成)的日志归一化尺度
   double segment_timeout_factor_ = 2.0;    // 段超时倍率（段时间 × 该值）
   int segment_confirm_frames_ = 3;         // 段完成需连续确认帧数（防抖）
   int seg0_confirm_frames_ = 8;            // Seg0 专用确认帧数（覆盖 boom 阶跃后臂架液压振荡模态）

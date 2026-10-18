@@ -15,7 +15,7 @@ kinematics:
   boom_pivot_z: 0.0
   # 关节限位 (deg)
   boom_joint_lower: -25.0
-  boom_joint_upper:  50.0
+  boom_joint_upper:  55.0
   arm_joint_lower:  -150.0
   arm_joint_upper:     -30.0
   bucket_joint_lower: -135.0
@@ -28,7 +28,7 @@ feasibility:
   reach_max: 12.0                   # 水平半径最大值 (m)
   dump_height_min: -2.0              # 卸载点最低高度 (m)
   dump_height_max: 5.5              # 卸载点最高高度 (m)
-  bucket_attitude_deg: -90.0        # 卸载姿态角 (deg，齿尖朝下)
+  bucket_attitude_deg: -60.0        # 卸载姿态角 (deg，齿尖朝下)
 
 # ---- 关键航路点生成（简化 4 航路点：WP1, WP4, WP5, WP6）----
 waypoint:
@@ -37,7 +37,7 @@ waypoint:
 
   # WP4 铰接点相对卡车表面的高度偏置 (m)
   # 铰接点目标高度 = (truck_center_z - truck_height_offset) + wp4_height_bias
-  wp4_height_bias: 2.5
+  wp4_height_bias: 3.0
 
   # 卡车框高度偏移 (m)：卡车框高度 = truck_center_z - truck_height_offset
   truck_height_offset: 0.5
@@ -64,7 +64,7 @@ waypoint:
   # ---- WP4 入厢点（回转圆策略，照 MATLAB calc_entry_point_circle_strategy）----
   truck_box_length: 5.0        # 卡车厢长 L (m)
   truck_box_width:  2.6        # 卡车厢宽 W (m)
-  wp4_R_coff:       0.4        # 回转圆半径混合系数：R = coff·R_dig_end + (1-coff)·R_unload
+  wp4_R_coff:       0.3        # 回转圆半径混合系数：R = coff·R_dig_end + (1-coff)·R_unload
 
   # ---- 铲斗宽度碰撞（配置空间外扩 / Minkowski 膨胀卡车框）----
   # 卡车框每边外扩 outset = 0.5·bucket_width + bucket_wall_clearance 后再与回转圆求交：
@@ -105,13 +105,13 @@ online_plan:
   # 段完成关节角容差（各段独立，deg）
   #   seg0 WP1→WP4：swing + boom + 高度门控
   #   seg1 WP4→WP5：仅检查 swing
-  #   seg2 WP5→WP6：arm + bucket（两者均达标才完成）
+  #   seg2 WP5→WP6：铲斗单向判据——实际铲斗角 ≥ 规划卸载角即完成（不看 arm、不用绝对值容差，允许过冲）
   seg0_swing_deg: 5.0
   seg0_boom_deg: 5.0
   seg0_height_gate: true   # WP1→WP4 是否同时要求铲斗高度 > truck_top + margin
   seg1_swing_deg: 5.0
-  seg2_arm_deg: 10.0
-  seg2_bucket_deg: 20.0
+  seg2_arm_deg: 10.0       # [已停用] Seg2 完成不再检查斗杆(arm)
+  seg2_bucket_deg: 20.0    # 仅作 Seg2 未达标时日志归一化尺度；完成触发=实际铲斗角≥规划角
 
   # 段完成需连续确认帧数（防液压振荡误判）
   segment_confirm_frames: 3
@@ -166,7 +166,8 @@ online_plan:
   #   mid = WP1.boom + cof·(WP4.boom − WP1.boom)，与 swing 进度解耦；
   #   swing 阶跃到位、高度门控通过后由 Phase2 时间 PCHIP 从 mid 平滑收尾到 WP4。
   #   0=不抬(停在实时角)、1=直接阶跃到 WP4 高度；调大→Phase1 抬得越高(跨越厢帮越安全)
-  seg0_boom_pchip_start_cof: 0.5
+  # 上机实测：0.5 时 Phase1 齿尖过低(-0.95m)触发门控 boost 爬不上去、30s 超时中止；抬到 0.8 让 Phase1 就把 boom 顶高、齿尖先过阈
+  seg0_boom_pchip_start_cof: 0.8
   # 铲斗姿态角目标（boom+arm+bucket，有符号 deg）——【单一真源】：
   #   ① Seg0 Phase1 每帧按实测 boom/arm 反馈计算参考 bucket 维持该姿态
   #      （当前姿态角 >= 该值时才回调收斗，单向，不反向张斗）；
