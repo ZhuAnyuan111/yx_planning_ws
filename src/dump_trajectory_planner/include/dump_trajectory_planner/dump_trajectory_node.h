@@ -6,9 +6,9 @@
 /// 采用基于航路点的在线规划方案：
 ///   - 激活时生成 WP1/WP4/WP5/WP6 四个关键航路点
 ///   - Seg0(WP1→WP4): boom + swing 双阶跃 + 高度门控 + PCHIP 平滑收尾的两阶段策略
-///   - Seg1(WP4→WP5): PCHIP 插值，回转到卸载方位
+///   - Seg1(WP4→WP5): PCHIP 插值，回转到卸载方位（完成=播完+swing 到位；boom 保持不下降）
 ///   - Seg2(WP5→WP6): PCHIP 插值，最终卸载姿态
-///   - Seg0 Phase1 期间 swing 到位即检查铲斗高度门控，未达标则 boom boost 重试
+///   - Seg0 Phase1→Phase2 跳转看 boom 带容差到位；高度门控不阻塞入口，由 Phase2 宽限期后每帧检查与段边界检查兜底
 ///   - 全部插值统一使用 PCHIP（保形，无超调）
 ///
 /// 触发协议：
@@ -195,7 +195,9 @@ class DumpTrajectoryNode {
   double seg0_swing_tolerance_deg_ = 5.0;       // WP1→WP4：回转
   double seg0_boom_tolerance_deg_ = 5.0;        // WP1→WP4：动臂
   bool seg0_height_gate_ = true;                // WP1→WP4：是否同时要求铲斗高于卡车上表面
-  double seg1_swing_tolerance_deg_ = 5.0;       // WP4→WP5：仅判断回转
+  double seg0_phase2_gate_grace_sec_ = 2.0;     // Phase2 启动后宽限期(s)：期内每帧门控不判，允许 boom 先 PCHIP 抬升
+  ros::Time seg0_phase2_start_time_;            // Phase2 启动时刻（宽限期计算基准）
+  double seg1_swing_tolerance_deg_ = 5.0;       // WP4→WP5：swing 到位阈值（播完后条件飞越等待用）
   double seg2_arm_tolerance_deg_ = 10.0;        // [已停用] WP5→WP6 完成不再检查斗杆(arm)
   double seg2_bucket_tolerance_deg_ = 20.0;     // WP5→WP6：铲斗单向判据(实际≥规划即完成)的日志归一化尺度
   double segment_timeout_factor_ = 2.0;    // 段超时倍率（段时间 × 该值）
@@ -213,11 +215,11 @@ class DumpTrajectoryNode {
   int gate_max_boost_count_ = 3;           // 最大自动提升次数，超过则终止卸载
 
   // ---- Seg0 两阶段策略参数 ----
-  double seg0_switch_threshold_deg_ = 3.0; // swing 到达 Phase1 目标 ±阈值(deg)后检查高度门控，通过则切 Phase2
+  double seg0_switch_threshold_deg_ = 3.0; // boom 显著抬升判定阈(deg)：boom 抬升量 ≥ seg0_min_step_factor_×该值 才启用 Seg0 两阶段；Phase1→Phase2 跳转已改为 boom 带容差到位，不再用该值
   double seg0_phase1_swing_dps_ = 15.0;    // Phase1 复合回转指令速率(deg/s)：boom 随动举升期间 swing 向 WP4 回转的速率（独立可调，实际受泵流量限制会滞后）
   double seg0_min_step_factor_ = 2.0;      // 小行程退化因子：boom 抬升量 < 该值×切换阈值 时退化为单段 PCHIP
   double seg0_swing_offset_deg_ = 15.0;    // swing Phase1 阶跃偏移角(deg)：目标 = WP4.swing − 偏移（沿回转方向）
-  double seg0_boom_pchip_start_cof_ = 0.5; // Phase1 boom 阶跃"中间角"比例∈[0,1]：mid = WP1.boom + cof·(WP4.boom − WP1.boom)；boom 阶跃到 mid 并保持（与 swing 解耦），swing 到位后 Phase2 时间 PCHIP 从 mid 收尾到 WP4
+  double seg0_boom_pchip_start_cof_ = 0.5; // Phase1 boom 阶跃"中间角"比例∈[0,1]：mid = WP1.boom + cof·(WP4.boom − WP1.boom)；boom 阶跃到 mid 后立即并行 PCHIP 到 WP4.boom（与 swing 阶跃同步，不等 swing 到位）
   double bucket_attitude_target_deg_ = -180.0;  // 铲斗姿态角目标（boom+arm+bucket）单一真源：Seg0 Phase1 逐帧维持 + 航路点生成侧 AdjustBucketByAttitude 共用
 
   // ---- 状态机 ----
@@ -243,12 +245,15 @@ class DumpTrajectoryNode {
   size_t seg_frame_idx_ = 0;
 
   // ---- Seg0 两阶段状态 ----
-  bool seg0_phase1_complete_ = false;      // Phase 1(swing 阶跃 + boom 阶跃到中间角保持) 是否已完成，进入 Phase 2(PCHIP)
+  bool seg0_phase1_complete_ = false;      // Phase 1 是否完成进入 Phase 2：跳转条件=|实测boom−WP4.boom|≤seg0_boom_tolerance_deg_（或 Phase1 超时兜底强跳）
   kinematics::JointState seg0_phase1_cmd_; // Phase 1 指令：boom=阶跃到中间角并保持, arm 保持, swing=阶跃到"卡车附近"(WP4−offset), bucket 维持姿态
-  double seg0_phase1_timeout_sec_ = 0.0;   // Phase 1 独立超时(s)=行程/seg0_boom_vel_dps×factor；超时转入高度门控 boost 重试
+  double seg0_phase1_timeout_sec_ = 0.0;   // Phase 1 独立超时(s)=行程/seg0_boom_vel_dps×factor；超时强制进 Phase2（防卡死兜底）
   // Phase1 boom 阶跃目标：mid = WP1.boom + cof·(WP4.boom − WP1.boom)，与 swing 进度解耦。
-  // boom 阶跃到 mid 并保持；swing 到位、高度门控通过后由 Phase2 时间 PCHIP 从 mid 收尾到 WP4。
+  // boom 阶跃到 mid 后立即沿 seg0_p1_boom_traj_ 并行 PCHIP 到 WP4.boom（不等 swing 到位）；
+  // Phase2 从实测 boom 续接收尾（此时差≈0）。
   double seg0_p1_boom_mid_rad_ = 0.0;      // Phase1 boom 阶跃目标角（中间角，rad）
+  std::vector<kinematics::JointState> seg0_p1_boom_traj_;  // Phase1 boom 并行 PCHIP 轨迹（mid→WP4.boom，按发布率采样）
+  double seg0_p1_boom_time_sec_ = 0.0;     // 上述 PCHIP 时长(s) = |WP4.boom − mid| / seg0_boom_vel_dps
 
   // ---- 门控自动提升状态 ----
   ros::Time gate_start_time_;              // 进入门控（或上次提升完成）的时刻

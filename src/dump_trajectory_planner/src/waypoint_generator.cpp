@@ -417,9 +417,13 @@ DumpWaypointResult GenerateDumpWaypoints(
   const double bk4 = AdjustBucketByAttitude(bo4, ar4, bk1, attitude,
                                              bkt_lo, bkt_hi);
 
-  // ---------- WP5: swing 到位，boom/arm 混合，bucket 姿态限制且不倒退 ----------
+  // ---------- WP5: swing 到位，boom 保持(不下降)，arm 混合，bucket 姿态限制且不倒退 ----------
+  // Seg1 boom 保持（用户规格 2026-10-19）：WP5.boom 恒取 WP4.boom，不再按 p5_boom_cof
+  // 混合下降——Seg1 对准方位期间卷着料的铲斗悬在车厢/料堆上方，边转边降会把斗压向
+  // 料堆；boom 下放挪到 Seg2 与开斗同步执行。PCHIP 平坦段(Δ=0)切线自动归零
+  // (PchipClampScalar)，Seg1 boom 指令恒平，无需额外处理。
   const double sw5 = sw_unl_u;
-  const double bo5 = p.p5_boom_cof * bo4 + (1.0 - p.p5_boom_cof) * bo_unload;
+  const double bo5 = bo4;
   const double ar5 = p.p5_arm_cof * ar4 + (1.0 - p.p5_arm_cof) * ar_unload;
   double bk5 = AdjustBucketByAttitude(bo5, ar5, bk4, attitude, bkt_lo, bkt_hi);
   if (bk5 < bk4) bk5 = bk4;  // 防止铲斗倒退
@@ -439,7 +443,7 @@ DumpWaypointResult GenerateDumpWaypoints(
       std::abs(sw4u - sw1) / std::max(p.swing_vel_dps, 1e-6));
   const double t2 = t1 + t2_dur;
 
-  // Seg1: WP4→WP5（swing 到位 + boom/arm 过渡）
+  // Seg1: WP4→WP5（swing 到位 + arm 过渡；boom 保持 bo5≡bo4，该项时长贡献=0）
   const double t3_dur = std::max({
       std::abs(sw5 - sw4u) / std::max(p.swing_vel_dps, 1e-6),
       std::abs(bo5 - bo4) / std::max(p.unload_boom_vel_dps, 1e-6),

@@ -45,7 +45,7 @@ waypoint:
   # WP4 IK 求解的铲斗关节角（deg），bucket_len=0 时不影响 swing/boom/arm
   wp4_bucket_angle_deg: 25.0
 
-  # WP5 混合系数
+  # WP5 混合系数（p5_boom_cof 已停用：WP5.boom 现恒取 WP4.boom，Seg1 boom 保持不下降）
   p5_boom_cof: 0.5
   p5_arm_cof: 0.5
 
@@ -109,7 +109,10 @@ online_plan:
   seg0_swing_deg: 5.0
   seg0_boom_deg: 5.0
   seg0_height_gate: true   # WP1→WP4 是否同时要求铲斗高度 > truck_top + margin
-  seg1_swing_deg: 5.0
+  # Phase2 启动后的宽限期 (s)：期内不判每帧高度门控，允许 boom 先从中间角 PCHIP 抬升到
+  # WP4；超期后若齿尖仍低于 truck_top + margin 才门控 boost 介入（防刮帮兜底）
+  seg0_phase2_gate_grace_sec: 2.0
+  seg1_swing_deg: 5.0      # Seg1 完成判据：指令播完 且 |swing 误差| ≤ 该值（连续 segment_confirm_frames 帧确认）
   seg2_arm_deg: 10.0       # [已停用] Seg2 完成不再检查斗杆(arm)
   seg2_bucket_deg: 20.0    # 仅作 Seg2 未达标时日志归一化尺度；完成触发=实际铲斗角≥规划角
 
@@ -149,9 +152,10 @@ online_plan:
   waypoint_clamp_abort_deg: 5.0
 
   # ---- Seg0 两阶段策略参数 ----
-  # Phase1 = swing 阀口饱和阶跃快转 + boom 直接阶跃到"中间角"并保持（与 swing 进度解耦）；
-  # swing 到达目标后检查高度门控，通过则 Phase2 时间 PCHIP 从中间角平滑收尾到 WP4
-  # swing 到达 Phase1 目标 ±阈值(deg)后检查高度门控
+  # Phase1 = swing 阀口饱和阶跃快转 + boom 阶跃到"中间角"后立即并行 PCHIP 抬升到 WP4.boom
+  # （与 swing 阶跃同步、不等 swing 到位）；swing 到位后 Phase2 负责 swing 收尾与 arm 外伸
+  # boom 显著抬升判定阈(deg)：boom 抬升量 ≥ seg0_min_step_factor_ × 该值 才启用 Seg0 两阶段策略
+  # （Phase1→Phase2 跳转条件现为 |实测boom − WP4.boom| ≤ seg0_boom_deg，不再用该值）
   seg0_switch_threshold_deg: 3.0
   # Phase1 复合回转指令速率(deg/s)：Phase1 期间 swing 向段终点回转的速率。
   # 独立于 waypoint/swing_vel_dps，可单独调"边升边转"快慢（实际受泵流量限制会滞后）
@@ -162,9 +166,9 @@ online_plan:
   # swing 到达此"卡车附近"角度后检查高度门控，通过则 Phase2 PCHIP 平滑收尾到 WP4
   # 调大→Phase1 行程长(更多满功率回转)、Phase2 收尾短；调小→反之
   seg0_swing_offset_deg: 15.0
-  # Phase1 boom 阶跃"中间角"比例系数 cof∈[0,1]：进入 dump 后 boom 直接阶跃到
+  # Phase1 boom 阶跃"中间角"比例系数 cof∈[0,1]：进入 dump 后 boom 先阶跃到
   #   mid = WP1.boom + cof·(WP4.boom − WP1.boom)，与 swing 进度解耦；
-  #   swing 阶跃到位、高度门控通过后由 Phase2 时间 PCHIP 从 mid 平滑收尾到 WP4。
+  #   随即从 mid 立即并行 PCHIP 抬升到 WP4.boom（与 swing 阶跃同步，不等 swing 到位）。
   #   0=不抬(停在实时角)、1=直接阶跃到 WP4 高度；调大→Phase1 抬得越高(跨越厢帮越安全)
   # 上机实测：0.5 时 Phase1 齿尖过低(-0.95m)触发门控 boost 爬不上去、30s 超时中止；抬到 0.8 让 Phase1 就把 boom 顶高、齿尖先过阈
   seg0_boom_pchip_start_cof: 0.8

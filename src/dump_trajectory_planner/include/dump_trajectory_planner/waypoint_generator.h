@@ -6,7 +6,7 @@
 /// 4 关键航路点（关节角，rad）：
 ///   WP1 —— 挖掘终止点（起点，姿态角修正 bucket）
 ///   WP4 —— 厢上过渡点（xy 由 ComputeMiddleUpXY 决定，铰接点高度=truck_top+bias，IK 求解）
-///   WP5 —— 卸载过渡点（swing 到位，boom/arm 按 P5 系数混合到 unload）
+///   WP5 —— 卸载过渡点（swing 到位，boom 保持=WP4.boom 不下降，arm 按 P5 系数混合到 unload）
 ///   WP6 —— 终点（unload_joint 完整）
 ///
 /// WP1→WP4 由节点端的两阶段策略驱动（boom 阶跃 + PCHIP），无需中间航路点。
@@ -53,7 +53,7 @@ struct WaypointParams {
   // WP4 IK 求解的铲斗关节角（deg），用于 swing_center_inverse_by_bucket_angle
   double wp4_bucket_angle_deg = 25.0;
 
-  // WP5 混合系数
+  // WP5 混合系数（p5_boom_cof 已停用：WP5.boom 恒取 WP4.boom，Seg1 boom 保持）
   double p5_boom_cof = 0.5;
   double p5_arm_cof = 0.5;
 
