@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>truck_smooth_planner</name>
+  <version>0.1.0</version>
+  <description>
+    无人挖掘机装满车后的车厢抹平轨迹规划与执行节点。
+    两阶段执行：Phase1 进入车厢尾起点 + Phase2 推抹至车厢头终点；
+    仅命令 swing/arm（IK 取车厢头尾点分量），boom/bucket 每帧填实测角。
+  </description>
+  <maintainer email="dev@example.com">yx</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+
+  <depend>roscpp</depend>
+  <depend>geometry_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>kinematics</depend>
+</package>

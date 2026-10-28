@@ -1,0 +1,72 @@
+# =============================================================
+# 抹平轨迹规划节点参数
+# 节点私有命名空间：/truck_smooth_node/
+# =============================================================
+
+# ---- kinematics 运动学参数（由 KinematicsSolver 从 pnh/kinematics/... 加载）----
+kinematics:
+  # 连杆长度 (m)
+  boom_length: 6.987
+  arm_length: 2.797
+  bucket_tooth_length: 2.359
+  # 动臂销轴相对回转中心的偏置 (m)
+  boom_pivot_x: 0.09
+  boom_pivot_y: 0.03
+  boom_pivot_z: 0.0
+  # 关节限位 (deg)
+  boom_joint_lower: -25.0
+  boom_joint_upper:  55.0
+  arm_joint_lower:  -150.0
+  arm_joint_upper:     -30.0
+  bucket_joint_lower: -135.0
+  bucket_joint_upper:   30.0
+
+# ---- 抹平范围点计算 ----
+smooth:
+  # 卡车框高度偏移 (m)：车厢上表面高度 z_top = truck_center_z - truck_height_offset
+  truck_height_offset: 0.5
+  # 刮削高度裕量 (m)：IK 目标高度 = z_top + smooth_height_bias（略高于框顶，只削尖不碰框）
+  smooth_height_bias: 0.0
+  # 卡车厢长 L (m)
+  truck_box_length: 5.0
+  # 车厢头尾内缩裕量 (m)：起终点沿厢长方向内缩，防铲斗碰厢壁
+  box_inset: 0.3
+  # IK 求解固定铲斗关节角 (deg)
+  bucket_angle_deg: 25.0
+  # IK 目标点语义：true=斗杆-铲斗铰接点(bucket_tooth_length_override=0)，false=齿尖
+  use_pivot_as_target: true
+  # ---- IK 失败降级（起终点不可达时不拒绝激活，在能力范围内抹平）----
+  # 端点收缩/路径采样步长 (m)
+  shrink_step_m: 0.1
+  # 最小有效抹平跨度 (m)：降级后区间跨度低于此值视为无意义，继续降级
+  min_smooth_span_m: 0.5
+
+# ---- 逐帧发布频率 (Hz) ----
+publish_rate: 10.0
+
+# ---- 命令限速 (deg/s)：swing/arm 每帧朝目标推进的最大角速度 ----
+swing_vel_dps: 15.0
+arm_vel_dps: 15.0
+
+# ---- 到位容差 (deg) 与确认帧数 ----
+swing_tolerance_deg: 5.0
+arm_tolerance_deg: 5.0
+# 到位需连续确认帧数（防液压振荡误判）
+confirm_frames: 3
+# Phase2 是否同时校验 swing 到位（false 时仅以 arm 为主判据）
+phase2_check_swing: true
+
+# ---- 超时 (s) ----
+# Phase1（进起点）超时
+phase1_timeout_sec: 8.0
+# Phase2（推抹至终点）超时
+phase2_timeout_sec: 10.0
+# 全局执行超时（应 < 决策层 level_truck_timeout_sec=15s）
+total_timeout_sec: 13.0
+# 输入话题最大允许静默时长（秒）：超时视为传感器断流并异常中止
+input_timeout_sec: 1.0
+
+# ---- 调试日志开关 ----
+# true：输出详细调试日志（几何快照/IK 探测统计/P1P2 心跳与到位计数跳变）
+# 调试完毕上生产环境建议置 false，仅保留状态转换类 INFO
+enable_debug_log: true

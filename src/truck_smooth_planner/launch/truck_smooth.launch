@@ -1,0 +1,10 @@
+<launch>
+  <!-- 抹平轨迹规划与执行节点 -->
+  <!-- 装满车后沿车厢上表面从车尾向车头推抹刮平，seq_action==6.0 激活 -->
+
+  <node pkg="truck_smooth_planner" type="truck_smooth_node"
+        name="truck_smooth_node" output="screen">
+    <rosparam command="load"
+              file="$(find truck_smooth_planner)/config/truck_smooth.yaml"/>
+  </node>
+</launch>
