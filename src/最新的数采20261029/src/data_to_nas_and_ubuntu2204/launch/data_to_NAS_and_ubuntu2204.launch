@@ -1,0 +1,142 @@
+<launch>
+  <!-- File save root; the node creates DataCapture and exits if it is inaccessible. -->
+  <arg name="scan_root" default="/media/nvidia/G500/DataCapture" />
+  <!-- <arg name="scan_root" default="/home/engineer/project/NAS/20260810NAS_test/DataCapture" /> -->
+  <arg name="yaml_config_path" default="/home/nvidia/data_capture_test/src/data_to_nas_and_ubuntu2204/config/param_sy870.yaml" />
+  <arg name="default_machine_model" default="SY750-1" />
+  <arg name="default_operation_mode" default="人工" />
+
+  <!-- Brain controller HTTP endpoints -->
+  <arg name="brain_base_url" default="http://192.168.1.120:8082" />
+  <arg name="brain_state_path" default="/state_data" />
+  <arg name="brain_gridmap_path" default="/gridmap_data" />
+  <arg name="brain_range_path" default="/range_data" />
+  <arg name="brain_camera0_path" default="/camera0_data" />
+  <arg name="brain_camera1_path" default="/camera1_data" />
+  <arg name="http_timeout" default="0.8" />
+  <arg name="http_session_recreate_failures" default="3" />
+
+  <!-- NAS upload endpoints -->
+  <arg name="nas_webhook_url" default="http://192.168.1.245:8082" />
+  <arg name="nas_upload_init_path" default="/upload_init" />
+  <arg name="nas_upload_chunk_path" default="/upload_chunk" />
+  <arg name="nas_upload_complete_path" default="/upload_complete" />
+  <arg name="nas_upload_status_path" default="/upload_status" />
+  <arg name="upload_interval_s" default="90.0" />
+  <arg name="stop_flush_delay_s" default="10.0" />
+  <arg name="chunk_size_bytes" default="8388608" />
+  <arg name="alignment_tolerance_ms" default="500" />
+  <arg name="zip_binary" default="/usr/bin/zip" />
+  <arg name="unzip_binary" default="/usr/bin/unzip" />
+  <arg name="zip_compression_level" default="1" />
+  <arg name="upload_parallel_chunks" default="4" />
+  <arg name="upload_retry_count" default="3" />
+  <arg name="complete_wait_timeout_s" default="1800.0" />
+  <arg name="upload_status_interval_s" default="5.0" />
+  <arg name="connect_timeout_s" default="5.0" />
+  <arg name="request_timeout_s" default="300.0" />
+  <arg name="nas_session_recreate_failures" default="3" />
+  <arg name="session_zip_tmp_root" default="$(arg scan_root)/.session_zip_tmp" />
+  <arg name="session_upload_status_root" default="$(arg scan_root)/.session_upload_status" />
+  <arg name="session_cache_cleanup_interval_s" default="3600.0" />
+  <arg name="session_zip_tmp_ttl_s" default="86400.0" />
+  <arg name="session_status_orphan_ttl_s" default="604800.0" />
+  <arg name="quality_error_detail_limit" default="200" />
+
+  <!-- Camera settings -->
+  <arg name="camera0_device" default="0" />
+  <arg name="camera1_device" default="1" />
+  <arg name="camera0_device_path" default="" />
+  <arg name="camera1_device_path" default="" />
+  <arg name="camera0_pipeline" default="" />
+  <arg name="camera1_pipeline" default="" />
+  <arg name="resize" default="[640, 360]" />
+  <arg name="jpeg_quality" default="90" />
+  <arg name="frame_interval_s" default="0.066" />
+  <arg name="camera_queue_max" default="200" />
+  <arg name="camera_watchdog_timeout_s" default="0.6" />
+  <arg name="camera_stream_error_confirm_s" default="2.5" />
+  <arg name="camera_reconnect_cooldown_s" default="2.0" />
+  <arg name="camera_startup_grace_s" default="5.0" />
+
+  <!-- Local disk and JSON writer settings -->
+  <arg name="min_free_bytes" default="21474836480" />
+  <arg name="max_scan_root_bytes" default="107374182400" />
+  <arg name="local_image_queue_max" default="1000" />
+  <arg name="capture_switch_debounce_s" default="1.0" />
+  <arg name="state_flush_every" default="20" />
+  <arg name="state_flush_interval_s" default="0.5" />
+  <arg name="state_fsync_interval_s" default="5.0" />
+  <arg name="state_json_queue_max" default="20000" />
+  <arg name="ros_spinner_threads" default="4" />
+
+  <node pkg="data_to_nas_and_ubuntu2204"
+        type="data_to_NAS_and_ubuntu2204_node"
+        name="data_to_NAS_and_ubuntu2204"
+        output="screen">
+    <param name="scan_root" value="$(arg scan_root)" />
+    <param name="yaml_config_path" value="$(arg yaml_config_path)" />
+    <param name="default_machine_model" value="$(arg default_machine_model)" />
+    <param name="default_operation_mode" value="$(arg default_operation_mode)" />
+
+    <param name="brain_base_url" value="$(arg brain_base_url)" />
+    <param name="brain_state_path" value="$(arg brain_state_path)" />
+    <param name="brain_gridmap_path" value="$(arg brain_gridmap_path)" />
+    <param name="brain_range_path" value="$(arg brain_range_path)" />
+    <param name="brain_camera0_path" value="$(arg brain_camera0_path)" />
+    <param name="brain_camera1_path" value="$(arg brain_camera1_path)" />
+    <param name="http_timeout" value="$(arg http_timeout)" />
+    <param name="http_session_recreate_failures" value="$(arg http_session_recreate_failures)" />
+
+    <param name="nas_webhook_url" value="$(arg nas_webhook_url)" />
+    <param name="nas_upload_init_path" value="$(arg nas_upload_init_path)" />
+    <param name="nas_upload_chunk_path" value="$(arg nas_upload_chunk_path)" />
+    <param name="nas_upload_complete_path" value="$(arg nas_upload_complete_path)" />
+    <param name="nas_upload_status_path" value="$(arg nas_upload_status_path)" />
+    <param name="upload_interval_s" value="$(arg upload_interval_s)" />
+    <param name="stop_flush_delay_s" value="$(arg stop_flush_delay_s)" />
+    <param name="chunk_size_bytes" type="double" value="$(arg chunk_size_bytes)" />
+    <param name="alignment_tolerance_ms" value="$(arg alignment_tolerance_ms)" />
+    <param name="zip_binary" value="$(arg zip_binary)" />
+    <param name="unzip_binary" value="$(arg unzip_binary)" />
+    <param name="zip_compression_level" value="$(arg zip_compression_level)" />
+    <param name="upload_parallel_chunks" value="$(arg upload_parallel_chunks)" />
+    <param name="upload_retry_count" value="$(arg upload_retry_count)" />
+    <param name="complete_wait_timeout_s" value="$(arg complete_wait_timeout_s)" />
+    <param name="upload_status_interval_s" value="$(arg upload_status_interval_s)" />
+    <param name="connect_timeout_s" value="$(arg connect_timeout_s)" />
+    <param name="request_timeout_s" value="$(arg request_timeout_s)" />
+    <param name="nas_session_recreate_failures" value="$(arg nas_session_recreate_failures)" />
+    <param name="session_zip_tmp_root" value="$(arg session_zip_tmp_root)" />
+    <param name="session_upload_status_root" value="$(arg session_upload_status_root)" />
+    <param name="session_cache_cleanup_interval_s" value="$(arg session_cache_cleanup_interval_s)" />
+    <param name="session_zip_tmp_ttl_s" value="$(arg session_zip_tmp_ttl_s)" />
+    <param name="session_status_orphan_ttl_s" value="$(arg session_status_orphan_ttl_s)" />
+    <param name="quality_error_detail_limit" value="$(arg quality_error_detail_limit)" />
+
+    <param name="camera0_device" value="$(arg camera0_device)" />
+    <param name="camera1_device" value="$(arg camera1_device)" />
+    <param name="camera0_device_path" value="$(arg camera0_device_path)" />
+    <param name="camera1_device_path" value="$(arg camera1_device_path)" />
+    <param name="camera0_pipeline" value="$(arg camera0_pipeline)" />
+    <param name="camera1_pipeline" value="$(arg camera1_pipeline)" />
+    <rosparam param="resize" subst_value="true">$(arg resize)</rosparam>
+    <param name="jpeg_quality" value="$(arg jpeg_quality)" />
+    <param name="frame_interval_s" value="$(arg frame_interval_s)" />
+    <param name="camera_queue_max" value="$(arg camera_queue_max)" />
+    <param name="camera_watchdog_timeout_s" value="$(arg camera_watchdog_timeout_s)" />
+    <param name="camera_stream_error_confirm_s" value="$(arg camera_stream_error_confirm_s)" />
+    <param name="camera_reconnect_cooldown_s" value="$(arg camera_reconnect_cooldown_s)" />
+    <param name="camera_startup_grace_s" value="$(arg camera_startup_grace_s)" />
+
+    <param name="min_free_bytes" type="double" value="$(arg min_free_bytes)" />
+    <param name="max_scan_root_bytes" type="double" value="$(arg max_scan_root_bytes)" />
+    <param name="local_image_queue_max" value="$(arg local_image_queue_max)" />
+    <param name="capture_switch_debounce_s" value="$(arg capture_switch_debounce_s)" />
+    <param name="state_flush_every" value="$(arg state_flush_every)" />
+    <param name="state_flush_interval_s" value="$(arg state_flush_interval_s)" />
+    <param name="state_fsync_interval_s" value="$(arg state_fsync_interval_s)" />
+    <param name="state_json_queue_max" value="$(arg state_json_queue_max)" />
+    <param name="ros_spinner_threads" value="$(arg ros_spinner_threads)" />
+  </node>
+</launch>
