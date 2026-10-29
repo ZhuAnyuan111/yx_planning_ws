@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.0.2)
-project(truck_smooth_planner)
+project(clean_trajectory_planner)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -30,19 +30,19 @@ include_directories(
 # Layer 1: 纯 C++ 工具层（angle_utils）+ ROS 节点类实现层
 add_library(${PROJECT_NAME}_lib
   src/angle_utils.cpp
-  src/truck_smooth_node.cpp
+  src/clean_trajectory_node.cpp
 )
 target_link_libraries(${PROJECT_NAME}_lib ${catkin_LIBRARIES})
 
 # Layer 2: ROS 节点入口
-add_executable(truck_smooth_node src/truck_smooth_node_main.cpp)
-target_link_libraries(truck_smooth_node
+add_executable(clean_trajectory_node src/clean_trajectory_node_main.cpp)
+target_link_libraries(clean_trajectory_node
   ${PROJECT_NAME}_lib
   ${catkin_LIBRARIES}
 )
 
 # ========== 安装 ==========
-install(TARGETS ${PROJECT_NAME}_lib truck_smooth_node
+install(TARGETS ${PROJECT_NAME}_lib clean_trajectory_node
   ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
   LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}

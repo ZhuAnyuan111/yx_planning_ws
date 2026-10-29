@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>clean_trajectory_planner</name>
+  <version>0.1.0</version>
+  <description>
+    无人挖掘机挖掘装车结束后的清台（地面平整/搭台）轨迹规划与执行节点。
+    以中心线(/GP2mid/front_lane_deg)±左右偏移展开多条径向条带，从离当前 swing 最近的边界起逐条带遍历清台区域：
+    每条带起点姿态固定 arm=最大外伸极限、bucket=0°，并由清台目标高度
+    (/Sys_SCo_Traj position.y)经 kinematics FK + 一维二分反解 boom，发布到
+    /clean_digPoint 供复位节点搭台模式摆位；激活后斗杆内收到固定斗杆姿态角 end_arm_attitude_deg
+    （boom/bucket 锁实测，靠控制层齿尖高度闭环贴地刮平），逐条带上报 /FlagCleanFinish。
+  </description>
+  <maintainer email="dev@example.com">yx</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+
+  <depend>roscpp</depend>
+  <depend>geometry_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>kinematics</depend>
+</package>

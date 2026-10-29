@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
 <package format="2">
-  <name>truck_smooth_planner</name>
+  <name>smooth_trajectory_planner</name>
   <version>0.1.0</version>
   <description>
     无人挖掘机装满车后的车厢抹平轨迹规划与执行节点。

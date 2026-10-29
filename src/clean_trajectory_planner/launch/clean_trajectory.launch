@@ -1,0 +1,11 @@
+<launch>
+  <!-- 清台（地面平整/搭台）轨迹规划与执行节点 -->
+  <!-- 装车结束、卡车驶离后，逐径向条带遍历清台区域：复位摆位到条带起点后，
+       激活(/Sys_SLe_FlagGroundLevelExcute==1.0, seq_action==7.0)斗杆内收刮平 -->
+
+  <node pkg="clean_trajectory_planner" type="clean_trajectory_node"
+        name="clean_trajectory_node" output="screen">
+    <rosparam command="load"
+              file="$(find clean_trajectory_planner)/config/clean_trajectory.yaml"/>
+  </node>
+</launch>

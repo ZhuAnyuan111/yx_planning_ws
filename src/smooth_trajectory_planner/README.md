@@ -1,4 +1,4 @@
-# truck_smooth_planner
+# smooth_trajectory_planner
 
 无人挖掘机**车厢抹平**轨迹规划与分阶段执行节点。
 
@@ -11,26 +11,26 @@
 ## 目录结构
 
 ```
-truck_smooth_planner/
+smooth_trajectory_planner/
 ├── CMakeLists.txt
 ├── package.xml
 ├── README.md
-├── include/truck_smooth_planner/
+├── include/smooth_trajectory_planner/
 │   ├── angle_utils.h                  # 纯 C++ 角度工具接口（无 ROS 依赖）
-│   └── truck_smooth_node.h            # TruckSmoothNode 类声明
+│   └── smooth_trajectory_node.h            # SmoothTrajectoryNode 类声明
 ├── src/
 │   ├── angle_utils.cpp                # 角度工具实现
-│   ├── truck_smooth_node.cpp          # 节点类实现
-│   └── truck_smooth_node_main.cpp     # 极简 main 入口
+│   ├── smooth_trajectory_node.cpp          # 节点类实现
+│   └── smooth_trajectory_node_main.cpp     # 极简 main 入口
 ├── config/
-│   └── truck_smooth.yaml              # 节点参数配置
+│   └── smooth_trajectory.yaml              # 节点参数配置
 └── launch/
-    └── truck_smooth.launch            # 启动文件
+    └── smooth_trajectory.launch            # 启动文件
 ```
 
 **构建产物：**
-- `libtruck_smooth_planner_lib.so`：工具 + 节点类共享库（可复用/单测）
-- `truck_smooth_node`：可执行文件
+- `libsmooth_trajectory_planner_lib.so`：工具 + 节点类共享库（可复用/单测）
+- `smooth_trajectory_node`：可执行文件
 
 ---
 
@@ -211,7 +211,7 @@ Orientation.w = bucket  （度，当前实测角）
 
 ## 参数配置
 
-配置文件：`config/truck_smooth.yaml`
+配置文件：`config/smooth_trajectory.yaml`
 
 ### kinematics（运动学机构参数）
 
@@ -261,21 +261,21 @@ Orientation.w = bucket  （度，当前实测角）
 ```bash
 cd ~/yx_planning_ws
 source /opt/ros/noetic/setup.bash
-catkin_make --pkg truck_smooth_planner
+catkin_make --pkg smooth_trajectory_planner
 ```
 
 ### 运行
 
 ```bash
 source devel/setup.bash
-roslaunch truck_smooth_planner truck_smooth.launch
+roslaunch smooth_trajectory_planner smooth_trajectory.launch
 ```
 
 ### 手动测试
 
 ```bash
 # 终端1：启动节点
-roslaunch truck_smooth_planner truck_smooth.launch
+roslaunch smooth_trajectory_planner smooth_trajectory.launch
 
 # 终端2：模拟实时关节角反馈
 rostopic pub -r 10 /joints_angle geometry_msgs/Quaternion \
@@ -333,13 +333,13 @@ ShortestAngularDistanceDeg(a, b)  // 无符号最短角距 ∈ [0, 180]
 
 ```
 ┌──────────────────────────────────────────────────┐
-│ Layer 3: truck_smooth_node_main.cpp              │  ← 极简入口
+│ Layer 3: smooth_trajectory_node_main.cpp              │  ← 极简入口
 │   int main(...) { init + create + spin }         │
 └──────────────────────────────────────────────────┘
                      ▲ 链接
 ┌──────────────────────────────────────────────────┐
-│ Layer 2: truck_smooth_node.h/.cpp                │  ← ROS 节点类
-│   TruckSmoothNode 类：订阅/发布/几何/IK/状态机   │
+│ Layer 2: smooth_trajectory_node.h/.cpp                │  ← ROS 节点类
+│   SmoothTrajectoryNode 类：订阅/发布/几何/IK/状态机   │
 └──────────────────────────────────────────────────┘
                      ▲ 依赖
 ┌──────────────────────────────────────────────────┐
@@ -362,8 +362,8 @@ ShortestAngularDistanceDeg(a, b)  // 无符号最短角距 ∈ [0, 180]
 
 | 类别 | 规范 | 示例 |
 |------|------|------|
-| 文件名 | snake_case | `truck_smooth_node.cpp` |
-| 类名 | PascalCase | `TruckSmoothNode` |
+| 文件名 | snake_case | `smooth_trajectory_node.cpp` |
+| 类名 | PascalCase | `SmoothTrajectoryNode` |
 | 函数名 | PascalCase | `ExecutePhase1()` |
 | 成员变量 | snake_case_ | `swing_start_deg_` |
 | 常量 | kCamelCase | `kActivateValue` |
@@ -386,7 +386,7 @@ ShortestAngularDistanceDeg(a, b)  // 无符号最短角距 ∈ [0, 180]
 ## 系统集成
 
 ```
-系统决策节点 ─── /Sys_SeqAction (data==6.0) ──► truck_smooth_node
+系统决策节点 ─── /Sys_SeqAction (data==6.0) ──► smooth_trajectory_node
 （DiggingCycleFsm::LEVEL_TRUCK）                     │
               ◄── /RefDeviceTraj_Smooth ────────────┤
               (Position.x=1 执行中, =0 结束)          │

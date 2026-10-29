@@ -1,6 +1,6 @@
 #pragma once
 
-/// @file truck_smooth_node.h
+/// @file smooth_trajectory_node.h
 /// @brief 车厢抹平轨迹规划与分阶段执行节点类声明。
 ///
 /// 功能：无人挖机装满车后，用铲斗沿车厢上表面从车尾向车头推抹，
@@ -46,9 +46,9 @@
 
 #include <memory>
 
-#include "truck_smooth_planner/angle_utils.h"
+#include "smooth_trajectory_planner/angle_utils.h"
 
-namespace truck_smooth_planner {
+namespace smooth_trajectory_planner {
 
 /// 抹平执行阶段
 enum class SmoothPhase {
@@ -59,9 +59,9 @@ enum class SmoothPhase {
   kFailed   // 异常中止（超时 / 输入失效 / IK 失败）
 };
 
-class TruckSmoothNode {
+class SmoothTrajectoryNode {
  public:
-  TruckSmoothNode(ros::NodeHandle& nh, ros::NodeHandle& pnh);
+  SmoothTrajectoryNode(ros::NodeHandle& nh, ros::NodeHandle& pnh);
 
  private:
   // ==================== 初始化 ====================
@@ -214,4 +214,4 @@ class TruckSmoothNode {
   bool finish_flag_ = false;
 };
 
-}  // namespace truck_smooth_planner
+}  // namespace smooth_trajectory_planner

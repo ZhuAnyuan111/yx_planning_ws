@@ -1,8 +1,8 @@
-#include "truck_smooth_planner/angle_utils.h"
+#include "smooth_trajectory_planner/angle_utils.h"
 
 #include <cmath>
 
-namespace truck_smooth_planner {
+namespace smooth_trajectory_planner {
 
 double NormalizeAngle(double angle) {
   angle = std::fmod(angle, 360.0);
@@ -21,4 +21,4 @@ double ShortestAngularDistanceDeg(double a_deg, double b_deg) {
   return std::abs(SignedShortestDiffDeg(a_deg, b_deg));
 }
 
-}  // namespace truck_smooth_planner
+}  // namespace smooth_trajectory_planner

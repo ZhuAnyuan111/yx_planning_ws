@@ -1,4 +1,4 @@
-#include "truck_smooth_planner/truck_smooth_node.h"
+#include "smooth_trajectory_planner/smooth_trajectory_node.h"
 
 #include <geometry_msgs/Pose.h>
 #include <std_msgs/Bool.h>
@@ -6,9 +6,9 @@
 #include <algorithm>
 #include <cmath>
 
-#include "truck_smooth_planner/angle_utils.h"
+#include "smooth_trajectory_planner/angle_utils.h"
 
-namespace truck_smooth_planner {
+namespace smooth_trajectory_planner {
 
 namespace {
 /// /Sys_SeqAction 抹平激活值（决策层 DiggingCycleFsm::LEVEL_TRUCK 发布）
@@ -36,7 +36,7 @@ const char* PhaseName(SmoothPhase p) {
 
 // ==================== 构造函数 ====================
 
-TruckSmoothNode::TruckSmoothNode(ros::NodeHandle& nh, ros::NodeHandle& pnh)
+SmoothTrajectoryNode::SmoothTrajectoryNode(ros::NodeHandle& nh, ros::NodeHandle& pnh)
     : nh_(nh), pnh_(pnh) {
   LoadParams();
 
@@ -45,12 +45,12 @@ TruckSmoothNode::TruckSmoothNode(ros::NodeHandle& nh, ros::NodeHandle& pnh)
   SetupTopics();
 
   timer_ = nh_.createTimer(ros::Duration(1.0 / publish_rate_),
-                           &TruckSmoothNode::TimerCallback, this,
+                           &SmoothTrajectoryNode::TimerCallback, this,
                            /*oneshot=*/false, /*autostart=*/false);
 
   PublishFinish(false);
 
-  ROS_INFO("[truck_smooth] ready. box_len=%.2f inset=%.2f height_off=%.2f "
+  ROS_INFO("[smooth_traj] ready. box_len=%.2f inset=%.2f height_off=%.2f "
            "bias=%.2f bkt=%.1f deg | vel(swing/arm)=%.1f/%.1f dps | "
            "tol(swing/arm)=%.1f/%.1f deg confirm=%d",
            truck_box_length_, box_inset_, truck_height_offset_,
@@ -60,7 +60,7 @@ TruckSmoothNode::TruckSmoothNode(ros::NodeHandle& nh, ros::NodeHandle& pnh)
 
 // ==================== 初始化 ====================
 
-void TruckSmoothNode::LoadParams() {
+void SmoothTrajectoryNode::LoadParams() {
   // 抹平范围/几何
   truck_height_offset_ = pnh_.param("smooth/truck_height_offset", 0.5);
   smooth_height_bias_ = pnh_.param("smooth/smooth_height_bias", 0.0);
@@ -94,18 +94,18 @@ void TruckSmoothNode::LoadParams() {
   if (confirm_frames_ < 1) confirm_frames_ = 1;
   if (shrink_step_m_ <= 0.0) shrink_step_m_ = 0.1;
   if (min_smooth_span_m_ < 0.0) min_smooth_span_m_ = 0.0;
-  if (enable_debug_log_) ROS_INFO("[truck_smooth] debug log ENABLED");
+  if (enable_debug_log_) ROS_INFO("[smooth_traj] debug log ENABLED");
 }
 
-void TruckSmoothNode::SetupTopics() {
+void SmoothTrajectoryNode::SetupTopics() {
   sub_joints_ = nh_.subscribe("/joints_angle", 1,
-                              &TruckSmoothNode::JointsCallback, this);
+                              &SmoothTrajectoryNode::JointsCallback, this);
   sub_swing_ = nh_.subscribe("/heading2swing_topic", 1,
-                             &TruckSmoothNode::SwingCallback, this);
+                             &SmoothTrajectoryNode::SwingCallback, this);
   sub_truck_pose_ = nh_.subscribe("/truck_center_unloadpoint", 1,
-                                  &TruckSmoothNode::TruckPoseCallback, this);
+                                  &SmoothTrajectoryNode::TruckPoseCallback, this);
   sub_activate_ = nh_.subscribe("/Sys_SeqAction", 1,
-                                &TruckSmoothNode::ActivateCallback, this);
+                                &SmoothTrajectoryNode::ActivateCallback, this);
 
   pub_trajectory_ = nh_.advertise<geometry_msgs::Pose>(
       "/RefDeviceTraj_Smooth", 1);
@@ -114,7 +114,7 @@ void TruckSmoothNode::SetupTopics() {
 
 // ==================== 订阅回调 ====================
 
-void TruckSmoothNode::JointsCallback(
+void SmoothTrajectoryNode::JointsCallback(
     const geometry_msgs::Quaternion::ConstPtr& msg) {
   boom_deg_ = msg->x;
   arm_deg_ = msg->y;
@@ -123,23 +123,23 @@ void TruckSmoothNode::JointsCallback(
   joints_valid_ = true;
   last_joints_time_ = ros::Time::now();
   if (first_frame) {
-    ROS_INFO("[truck_smooth] first /joints_angle: boom=%.2f arm=%.2f "
+    ROS_INFO("[smooth_traj] first /joints_angle: boom=%.2f arm=%.2f "
              "bucket=%.2f deg", boom_deg_, arm_deg_, bucket_deg_);
   }
 }
 
-void TruckSmoothNode::SwingCallback(const std_msgs::Float32::ConstPtr& msg) {
+void SmoothTrajectoryNode::SwingCallback(const std_msgs::Float32::ConstPtr& msg) {
   swing_deg_ = msg->data;
   const bool first_frame = !swing_valid_;
   swing_valid_ = true;
   last_swing_time_ = ros::Time::now();
   if (first_frame) {
-    ROS_INFO("[truck_smooth] first /heading2swing_topic: swing=%.2f deg",
+    ROS_INFO("[smooth_traj] first /heading2swing_topic: swing=%.2f deg",
              swing_deg_);
   }
 }
 
-void TruckSmoothNode::TruckPoseCallback(
+void SmoothTrajectoryNode::TruckPoseCallback(
     const geometry_msgs::Quaternion::ConstPtr& msg) {
   // x/y/z = 卡车中心坐标（z 为 RTK 高度）；w = RTK 方位角 α (deg, 北0顺时针)
   // base 系卡车航向 β = (180 − α) mod 360 → rad
@@ -155,7 +155,7 @@ void TruckSmoothNode::TruckPoseCallback(
   last_truck_time_ = ros::Time::now();
 
   if (first_frame) {
-    ROS_INFO("[truck_smooth] first /truck_center_unloadpoint: (%.2f, %.2f, "
+    ROS_INFO("[smooth_traj] first /truck_center_unloadpoint: (%.2f, %.2f, "
              "%.2f) m, rtk_heading=%.2f deg -> yaw_base=%.2f deg",
              truck_center_x_, truck_center_y_, truck_center_z_,
              truck_rtk_heading_deg_, Rad2Deg(truck_yaw_rad_));
@@ -163,13 +163,13 @@ void TruckSmoothNode::TruckPoseCallback(
 }
 
 /// /Sys_SeqAction (std_msgs/Float64): data==6.0 激活抹平；其余值停止/复位
-void TruckSmoothNode::ActivateCallback(const std_msgs::Float64::ConstPtr& msg) {
+void SmoothTrajectoryNode::ActivateCallback(const std_msgs::Float64::ConstPtr& msg) {
   if (msg->data != kActivateValue) {
     if (phase_ == SmoothPhase::kDone) {
       // 抹平完成后跳出本阶段：完成标志复位，回到空闲
       PublishFinish(false);
       phase_ = SmoothPhase::kIdle;
-      ROS_INFO("[truck_smooth] smooth stage exited, finish flag reset to false");
+      ROS_INFO("[smooth_traj] smooth stage exited, finish flag reset to false");
     } else if (phase_ != SmoothPhase::kIdle) {
       StopExecution();
     }
@@ -181,7 +181,7 @@ void TruckSmoothNode::ActivateCallback(const std_msgs::Float64::ConstPtr& msg) {
   // kDone/kFailed 回到 kIdle 的转换由上方非激活分支（seq_action!=6.0）处理。
   if (phase_ != SmoothPhase::kIdle) return;
 
-  ROS_INFO("[truck_smooth] activation received (Sys_SeqAction=6)");
+  ROS_INFO("[smooth_traj] activation received (Sys_SeqAction=6)");
 
   if (!CheckInputsValid()) return;
 
@@ -206,17 +206,17 @@ void TruckSmoothNode::ActivateCallback(const std_msgs::Float64::ConstPtr& msg) {
   PublishFinish(false);
   timer_.start();
 
-  ROS_INFO("[truck_smooth] -> Phase1: move to tail start (swing=%.1f arm=%.1f) "
+  ROS_INFO("[smooth_traj] -> Phase1: move to tail start (swing=%.1f arm=%.1f) "
            "| Phase2 target head (swing=%.1f arm=%.1f)",
            swing_start_deg_, arm_start_deg_, swing_end_deg_, arm_end_deg_);
 }
 
 // ==================== 几何与 IK ====================
 
-bool TruckSmoothNode::ComputeSmoothTargets() {
+bool SmoothTrajectoryNode::ComputeSmoothTargets() {
   if (!truck_pose_valid_) {
     ROS_WARN_THROTTLE(2.0,
-        "[truck_smooth] truck pose not received, cannot compute targets");
+        "[smooth_traj] truck pose not received, cannot compute targets");
     return false;
   }
 
@@ -229,7 +229,7 @@ bool TruckSmoothNode::ComputeSmoothTargets() {
   const double z = z_top + smooth_height_bias_;
 
   if (enable_debug_log_) {
-    ROS_INFO("[truck_smooth][dbg] compute targets: center(%.2f,%.2f,%.2f) "
+    ROS_INFO("[smooth_traj][dbg] compute targets: center(%.2f,%.2f,%.2f) "
              "yaw_base=%.2f deg dir(%.3f,%.3f) half=%.2f z_top=%.2f z=%.2f | "
              "fb sw=%.1f boom=%.1f ar=%.1f bkt=%.1f",
              truck_center_x_, truck_center_y_, truck_center_z_,
@@ -255,10 +255,10 @@ bool TruckSmoothNode::ComputeSmoothTargets() {
     const bool full_span =
         (std::abs(s_tail + half) < 1e-6) && (std::abs(s_head - half) < 1e-6);
     if (full_span) {
-      ROS_INFO("[truck_smooth] IK ok at full box span [-%.2f, %.2f] m, z=%.2f",
+      ROS_INFO("[smooth_traj] IK ok at full box span [-%.2f, %.2f] m, z=%.2f",
                half, half, z);
     } else {
-      ROS_WARN("[truck_smooth] 端点收缩降级：抹平区间缩至 [%.2f, %.2f] m"
+      ROS_WARN("[smooth_traj] 端点收缩降级：抹平区间缩至 [%.2f, %.2f] m"
                "（原 [-%.2f, %.2f]，跨度 %.2f m），z=%.2f",
                s_tail, s_head, -half, half, s_head - s_tail, z);
     }
@@ -273,12 +273,12 @@ bool TruckSmoothNode::ComputeSmoothTargets() {
   // ---------- 兜底：最大能力扫掠 ----------
   // 端点收缩失败（某侧从端点到中心整体不可达），改为在整段密采样，
   // 取可达点中 s 最小/最大者作为起终点，做挖机能力范围内的最大幅度扫掠。
-  ROS_WARN("[truck_smooth] 端点收缩失败(tail_ok=%d head_ok=%d)，"
+  ROS_WARN("[smooth_traj] 端点收缩失败(tail_ok=%d head_ok=%d)，"
            "降级为最大能力扫掠", tail_ok, head_ok);
   double sw_t2 = 0.0, ar_t2 = 0.0, sw_h2 = 0.0, ar_h2 = 0.0;
   if (MaxSweepProbe(half, z, dir_x, dir_y, s_tail, s_head,
                     sw_t2, ar_t2, sw_h2, ar_h2)) {
-    ROS_WARN("[truck_smooth] 最大能力扫掠区间 [%.2f, %.2f] m（跨度 %.2f m），"
+    ROS_WARN("[smooth_traj] 最大能力扫掠区间 [%.2f, %.2f] m（跨度 %.2f m），"
              "z=%.2f；原始车厢头尾点超出可达域，请现场复核卡车停靠位姿",
              s_tail, s_head, s_head - s_tail, z);
     swing_start_deg_ = NormalizeAngle(sw_t2);
@@ -294,7 +294,7 @@ bool TruckSmoothNode::ComputeSmoothTargets() {
   // 此时绝不进入两阶段流程——否则起终点=当前位姿会瞬间判定到位、
   // 谎报 FlagSmoothFinish=true（“假成功”），让决策层误以为已抹平。
   // 处置：上报未完成(false) + 置 kFailed，由决策层超时兜底，等待现场调整车位。
-  ROS_ERROR("[truck_smooth] 车厢上表面 z=%.2f 整体超出可达域，无法有效抹平；"
+  ROS_ERROR("[smooth_traj] 车厢上表面 z=%.2f 整体超出可达域，无法有效抹平；"
             "拒绝执行并上报未完成(FlagSmoothFinish=false)。"
             "请现场复核卡车停靠位置/高度", z);
   PublishFinish(false);
@@ -302,14 +302,14 @@ bool TruckSmoothNode::ComputeSmoothTargets() {
   return false;
 }
 
-void TruckSmoothNode::LogTargets(double z) {
+void SmoothTrajectoryNode::LogTargets(double z) {
   if (!enable_debug_log_) return;
-  ROS_INFO("[truck_smooth][dbg] z=%.2f | start(sw=%.1f ar=%.1f) "
+  ROS_INFO("[smooth_traj][dbg] z=%.2f | start(sw=%.1f ar=%.1f) "
            "end(sw=%.1f ar=%.1f)",
            z, swing_start_deg_, arm_start_deg_, swing_end_deg_, arm_end_deg_);
 }
 
-bool TruckSmoothNode::SolvePointIk(double x, double y, double z,
+bool SmoothTrajectoryNode::SolvePointIk(double x, double y, double z,
                                    double& swing_deg, double& arm_deg,
                                    bool verbose) {
   kinematics::SwingBaseIkRequest req;
@@ -324,7 +324,7 @@ bool TruckSmoothNode::SolvePointIk(double x, double y, double z,
   const auto ik = solver_->swing_center_inverse_by_bucket_angle(req);
   if (!ik.success) {
     if (verbose) {
-      ROS_ERROR("[truck_smooth] IK failed at (%.2f, %.2f, %.2f): %s",
+      ROS_ERROR("[smooth_traj] IK failed at (%.2f, %.2f, %.2f): %s",
                 x, y, z, ik.message.c_str());
     }
     return false;
@@ -334,7 +334,7 @@ bool TruckSmoothNode::SolvePointIk(double x, double y, double z,
   return true;
 }
 
-bool TruckSmoothNode::SolveOffsetIk(double s, double z,
+bool SmoothTrajectoryNode::SolveOffsetIk(double s, double z,
                                     double dir_x, double dir_y,
                                     double& swing_deg, double& arm_deg) {
   const double x = truck_center_x_ + s * dir_x;
@@ -343,7 +343,7 @@ bool TruckSmoothNode::SolveOffsetIk(double s, double z,
   return SolvePointIk(x, y, z, swing_deg, arm_deg, /*verbose=*/false);
 }
 
-bool TruckSmoothNode::ShrinkProbe(double s_start, double z,
+bool SmoothTrajectoryNode::ShrinkProbe(double s_start, double z,
                                   double dir_x, double dir_y,
                                   double& s_out,
                                   double& swing_deg, double& arm_deg) {
@@ -358,7 +358,7 @@ bool TruckSmoothNode::ShrinkProbe(double s_start, double z,
       swing_deg = sw;
       arm_deg = ar;
       if (enable_debug_log_) {
-        ROS_INFO("[truck_smooth][dbg] shrink probe: s_start=%.2f -> s=%.2f "
+        ROS_INFO("[smooth_traj][dbg] shrink probe: s_start=%.2f -> s=%.2f "
                  "(steps=%d) sw=%.1f ar=%.1f", s_start, s, steps, sw, ar);
       }
       return true;
@@ -368,13 +368,13 @@ bool TruckSmoothNode::ShrinkProbe(double s_start, double z,
     ++steps;
   }
   if (enable_debug_log_) {
-    ROS_INFO("[truck_smooth][dbg] shrink probe FAILED: s_start=%.2f, "
+    ROS_INFO("[smooth_traj][dbg] shrink probe FAILED: s_start=%.2f, "
              "no reachable point from end to center", s_start);
   }
   return false;
 }
 
-bool TruckSmoothNode::MaxSweepProbe(double half, double z,
+bool SmoothTrajectoryNode::MaxSweepProbe(double half, double z,
                                     double dir_x, double dir_y,
                                     double& s_tail_out, double& s_head_out,
                                     double& sw_tail, double& ar_tail,
@@ -400,7 +400,7 @@ bool TruckSmoothNode::MaxSweepProbe(double half, double z,
     }
   }
   if (enable_debug_log_) {
-    ROS_INFO("[truck_smooth][dbg] max sweep: samples=%d reachable=%d "
+    ROS_INFO("[smooth_traj][dbg] max sweep: samples=%d reachable=%d "
              "s_range=[%.2f, %.2f] span=%.2f (need>=%.2f)",
              n_total, n_ok, any ? s_min : 0.0, any ? s_max : 0.0,
              any ? (s_max - s_min) : 0.0, min_smooth_span_m_);
@@ -419,7 +419,7 @@ bool TruckSmoothNode::MaxSweepProbe(double half, double z,
 
 // ==================== 定时器与阶段执行 ====================
 
-void TruckSmoothNode::TimerCallback(const ros::TimerEvent& /*event*/) {
+void SmoothTrajectoryNode::TimerCallback(const ros::TimerEvent& /*event*/) {
   if (phase_ != SmoothPhase::kPhase1 && phase_ != SmoothPhase::kPhase2) {
     timer_.stop();
     return;
@@ -452,7 +452,7 @@ void TruckSmoothNode::TimerCallback(const ros::TimerEvent& /*event*/) {
 }
 
 /// 阶段1：从当前实时位置限速逼近车尾起点 (swing_start, arm_start)
-void TruckSmoothNode::ExecutePhase1() {
+void SmoothTrajectoryNode::ExecutePhase1() {
   const double elapsed = (ros::Time::now() - phase_start_time_).toSec();
   if (elapsed > phase1_timeout_sec_) {
     AbortExecution("phase1 (enter tail start) timeout");
@@ -481,7 +481,7 @@ void TruckSmoothNode::ExecutePhase1() {
 
   if (enable_debug_log_) {
     ROS_INFO_THROTTLE(0.5,
-        "[truck_smooth][dbg] P1: fb(sw=%.1f ar=%.1f) tgt(sw=%.1f ar=%.1f) "
+        "[smooth_traj][dbg] P1: fb(sw=%.1f ar=%.1f) tgt(sw=%.1f ar=%.1f) "
         "cmd(sw=%.1f ar=%.1f) err(sw=%.1f ar=%.1f) ok(s=%d a=%d) cnt=%d/%d "
         "dt=%.3f elapsed=%.1f/%.1f",
         swing_deg_, arm_deg_, swing_start_deg_, arm_start_deg_,
@@ -492,7 +492,7 @@ void TruckSmoothNode::ExecutePhase1() {
         dt, elapsed, phase1_timeout_sec_);
     if (phase1_confirm_count_ != dbg_p1_cnt_) {
       dbg_p1_cnt_ = phase1_confirm_count_;
-      ROS_INFO("[truck_smooth][dbg] P1 confirm %d/%d (swing_ok=%d arm_ok=%d)",
+      ROS_INFO("[smooth_traj][dbg] P1 confirm %d/%d (swing_ok=%d arm_ok=%d)",
                phase1_confirm_count_, confirm_frames_, swing_ok, arm_ok);
     }
   }
@@ -504,7 +504,7 @@ void TruckSmoothNode::ExecutePhase1() {
       phase_start_time_ = ros::Time::now();
       last_timer_time_ = phase_start_time_;
       phase2_confirm_count_ = 0;
-      ROS_INFO("[truck_smooth] -> Phase2: push smooth to head end "
+      ROS_INFO("[smooth_traj] -> Phase2: push smooth to head end "
                "(swing=%.1f arm=%.1f)", swing_end_deg_, arm_end_deg_);
     }
   } else {
@@ -513,7 +513,7 @@ void TruckSmoothNode::ExecutePhase1() {
 }
 
 /// 阶段2：限速推抹至车头终点 (swing_end, arm_end)
-void TruckSmoothNode::ExecutePhase2() {
+void SmoothTrajectoryNode::ExecutePhase2() {
   const double elapsed = (ros::Time::now() - phase_start_time_).toSec();
   if (elapsed > phase2_timeout_sec_) {
     AbortExecution("phase2 (push to head end) timeout");
@@ -542,7 +542,7 @@ void TruckSmoothNode::ExecutePhase2() {
 
   if (enable_debug_log_) {
     ROS_INFO_THROTTLE(0.5,
-        "[truck_smooth][dbg] P2: fb(sw=%.1f ar=%.1f) tgt(sw=%.1f ar=%.1f) "
+        "[smooth_traj][dbg] P2: fb(sw=%.1f ar=%.1f) tgt(sw=%.1f ar=%.1f) "
         "cmd(sw=%.1f ar=%.1f) err(sw=%.1f ar=%.1f) ok(s=%d a=%d) cnt=%d/%d "
         "dt=%.3f elapsed=%.1f/%.1f",
         swing_deg_, arm_deg_, swing_end_deg_, arm_end_deg_,
@@ -553,7 +553,7 @@ void TruckSmoothNode::ExecutePhase2() {
         dt, elapsed, phase2_timeout_sec_);
     if (phase2_confirm_count_ != dbg_p2_cnt_) {
       dbg_p2_cnt_ = phase2_confirm_count_;
-      ROS_INFO("[truck_smooth][dbg] P2 confirm %d/%d (swing_ok=%d arm_ok=%d)",
+      ROS_INFO("[smooth_traj][dbg] P2 confirm %d/%d (swing_ok=%d arm_ok=%d)",
                phase2_confirm_count_, confirm_frames_, swing_ok, arm_ok);
     }
   }
@@ -566,7 +566,7 @@ void TruckSmoothNode::ExecutePhase2() {
       PublishFinish(true);
       timer_.stop();
       phase_ = SmoothPhase::kDone;
-      ROS_INFO("[truck_smooth] smooth FINISHED (head end reached), "
+      ROS_INFO("[smooth_traj] smooth FINISHED (head end reached), "
                "FlagSmoothFinish=true");
     }
   } else {
@@ -576,7 +576,7 @@ void TruckSmoothNode::ExecutePhase2() {
 
 // ==================== 工具方法 ====================
 
-void TruckSmoothNode::PublishTrajectoryFrame(double swing, double boom,
+void SmoothTrajectoryNode::PublishTrajectoryFrame(double swing, double boom,
                                              double arm, double bucket,
                                              bool running) {
   geometry_msgs::Pose msg;
@@ -590,21 +590,21 @@ void TruckSmoothNode::PublishTrajectoryFrame(double swing, double boom,
   pub_trajectory_.publish(msg);
 }
 
-void TruckSmoothNode::PublishFinish(bool finished) {
+void SmoothTrajectoryNode::PublishFinish(bool finished) {
   std_msgs::Bool msg;
   msg.data = finished;
   pub_finish_.publish(msg);
   finish_flag_ = finished;
 }
 
-double TruckSmoothNode::StepTowards(double current, double target,
+double SmoothTrajectoryNode::StepTowards(double current, double target,
                                     double max_step) const {
   const double diff = target - current;
   if (std::abs(diff) <= max_step) return target;
   return current + (diff > 0.0 ? max_step : -max_step);
 }
 
-void TruckSmoothNode::StopExecution() {
+void SmoothTrajectoryNode::StopExecution() {
   if (phase_ == SmoothPhase::kPhase1 || phase_ == SmoothPhase::kPhase2 ||
       phase_ == SmoothPhase::kFailed) {
     // 外部撤销：保持末次命令并置结束位（不跳向目标）
@@ -613,15 +613,15 @@ void TruckSmoothNode::StopExecution() {
     PublishFinish(false);
     timer_.stop();
     phase_ = SmoothPhase::kIdle;
-    ROS_INFO("[truck_smooth] execution stopped by external command");
+    ROS_INFO("[smooth_traj] execution stopped by external command");
   }
 }
 
 /// 异常中止：保持末次命令姿态并置 Position.x=0，FlagSmoothFinish=false，
 /// 状态置 kFailed。不跳向目标，避免中止瞬间给控制器大阶跃。
-void TruckSmoothNode::AbortExecution(const char* reason) {
+void SmoothTrajectoryNode::AbortExecution(const char* reason) {
   const double elapsed = (ros::Time::now() - execution_start_time_).toSec();
-  ROS_WARN("[truck_smooth] ABORT after %.1fs: %s (phase=%s, fb[sw=%.1f "
+  ROS_WARN("[smooth_traj] ABORT after %.1fs: %s (phase=%s, fb[sw=%.1f "
            "ar=%.1f] cmd[sw=%.1f ar=%.1f])", elapsed, reason,
            PhaseName(phase_), swing_deg_, arm_deg_,
            cmd_swing_deg_, cmd_arm_deg_);
@@ -632,37 +632,37 @@ void TruckSmoothNode::AbortExecution(const char* reason) {
   phase_ = SmoothPhase::kFailed;
 }
 
-bool TruckSmoothNode::CheckInputsValid() {
+bool SmoothTrajectoryNode::CheckInputsValid() {
   if (!joints_valid_ || !swing_valid_) {
     ROS_WARN_THROTTLE(2.0,
-        "[truck_smooth] waiting feedback: joints=%d swing=%d",
+        "[smooth_traj] waiting feedback: joints=%d swing=%d",
         joints_valid_, swing_valid_);
     return false;
   }
   if (!truck_pose_valid_) {
     ROS_WARN_THROTTLE(2.0,
-        "[truck_smooth] waiting /truck_center_unloadpoint");
+        "[smooth_traj] waiting /truck_center_unloadpoint");
     return false;
   }
   return true;
 }
 
-bool TruckSmoothNode::CheckInputsFresh() {
+bool SmoothTrajectoryNode::CheckInputsFresh() {
   if (input_timeout_sec_ <= 0.0) return true;
   const ros::Time now = ros::Time::now();
   const double joints_age = (now - last_joints_time_).toSec();
   const double swing_age = (now - last_swing_time_).toSec();
   if (joints_age > input_timeout_sec_) {
-    ROS_WARN_THROTTLE(1.0, "[truck_smooth] /joints_angle stale (%.2fs)",
+    ROS_WARN_THROTTLE(1.0, "[smooth_traj] /joints_angle stale (%.2fs)",
                       joints_age);
     return false;
   }
   if (swing_age > input_timeout_sec_) {
-    ROS_WARN_THROTTLE(1.0, "[truck_smooth] /heading2swing_topic stale (%.2fs)",
+    ROS_WARN_THROTTLE(1.0, "[smooth_traj] /heading2swing_topic stale (%.2fs)",
                       swing_age);
     return false;
   }
   return true;
 }
 
-}  // namespace truck_smooth_planner
+}  // namespace smooth_trajectory_planner

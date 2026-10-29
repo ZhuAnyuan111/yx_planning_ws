@@ -1,0 +1,85 @@
+# =============================================================
+# 清台（地面平整/搭台）轨迹规划节点参数
+# 节点私有命名空间：/clean_trajectory_node/
+# =============================================================
+
+# ---- kinematics 运动学参数（由 KinematicsSolver 从 pnh/kinematics/... 加载）----
+# 仅用其正运动学(FK)与几何/限位，反解条带起点 boom（无三级降级 IK）
+kinematics:
+  # 连杆长度 (m)
+  boom_length: 6.987
+  arm_length: 2.797
+  bucket_tooth_length: 2.359
+  # 动臂销轴相对回转中心的偏置 (m)
+  boom_pivot_x: 0.09
+  boom_pivot_y: 0.03
+  boom_pivot_z: 0.0
+  # 关节限位 (deg)
+  boom_joint_lower: -25.0
+  boom_joint_upper:  55.0
+  arm_joint_lower:  -150.0
+  arm_joint_upper:     -30.0
+  bucket_joint_lower: -135.0
+  bucket_joint_upper:   30.0
+
+# ---- 清台区域与起点姿态 ----
+clean:
+  # 中心线 swing 角参数路径（全局 ROS 参数，由 GP2mid 节点维护，直接当 swing 用）
+  front_lane_param: /GP2mid/front_lane_deg
+  # 清台目标地面相对高度 z 来源话题（geometry_msgs/Pose，取 position.y）
+  ground_height_topic: /Sys_SCo_Traj
+  # 中心线左右偏移（swing 度）：清台区域 = [front_lane-left, front_lane+right]
+  left_offset_deg: 20.0
+  right_offset_deg: 20.0
+  # 条带间隔（swing 度，≈铲斗有效刮宽对应的回转角）
+  strip_step_deg: 10.0
+  # 遍历方向：由当前实时 swing 位置自动决定，从最近的区域边界开始
+  #（无需手动配置；lo=lane-left_offset, hi=lane+right_offset，哪端离当前 swing 近就从哪端起）
+
+  # 起点姿态（发 /clean_digPoint）：arm 固定最大外伸极限、bucket 固定 0°，boom 由高度反解
+  start_arm_deg: -30.0       # 斗杆最大外伸极限角（默认取 kinematics arm_upper，关节角）
+  start_bucket_deg: 0.0      # 起点铲斗关节角（固定 0°）
+  # 内收终点「斗杆姿态角」(boom+arm, deg)：内收过程每帧由实测 boom 反推斗杆关节角，
+  # 使斗杆绝对倾角恒定（非关节角！需标定到比起点姿态更"收"的值）
+  end_arm_attitude_deg: -60.0
+
+  # ---- boom 高度反解（一维二分）----
+  boom_solve_tol_m: 0.01     # 齿尖高度收敛容差 (m)
+  boom_solve_max_iter: 60    # 二分最大迭代次数
+  # 高度基准偏置 (m)：实际反解目标 = /Sys_SCo_Traj position.y + height_offset_m
+  # （若上游高度与 FK z 竖直基准不一致，在此标定）
+  height_offset_m: 0.0
+  # 高度目标点语义：false=齿尖(含 bucket_tooth_length)，true=斗杆-铲斗铰接点
+  height_target_at_pivot: false
+  # 空闲期重发 /clean_digPoint 的高度死区 (m)：z 变化超过此值才重算重发，防抖
+  height_eps_m: 0.02
+
+# ---- 逐帧发布频率 (Hz) ----
+publish_rate: 10.0
+# ---- 空闲期刷新频率 (s)：armed 态节流重读 front_lane / 重发 /clean_digPoint ----
+idle_refresh_sec: 1.0
+
+# ---- 命令限速 (deg/s)：内收过程 arm 每帧朝目标推进的最大角速度 ----
+arm_vel_dps: 15.0
+swing_vel_dps: 15.0
+
+# ---- 到位容差 (deg) 与确认帧数 ----
+arm_tolerance_deg: 5.0
+swing_tolerance_deg: 5.0
+# 到位需连续确认帧数（防液压振荡误判）
+confirm_frames: 3
+# 内收到位是否同时校验 swing（默认 false：swing 由复位摆好、内收期间保持）
+retract_check_swing: false
+
+# ---- 超时 (s) ----
+# 单条带内收超时
+strip_timeout_sec: 8.0
+# 全局执行超时（单次激活，应 < 决策层 ground_level 超时）
+total_timeout_sec: 12.0
+# 输入话题最大允许静默时长：超时视为传感器断流并异常中止
+input_timeout_sec: 1.0
+
+# ---- 调试日志开关 ----
+# true：输出详细调试日志（条带生成/boom 反解快照/内收心跳与到位计数跳变）
+# 调试完毕上生产环境建议置 false，仅保留状态转换类 INFO
+enable_debug_log: true
