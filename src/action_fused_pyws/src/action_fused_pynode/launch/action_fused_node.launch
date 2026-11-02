@@ -1,0 +1,6 @@
+<launch>
+  <!-- <rosparam command="load" file="$(find action_fused_pynode)/config/param_sy200_transite.yaml" /> -->
+  <rosparam command="load" file="/home/nvidia/unmanned_exca/Sany_and_DataCapture_rs/Sensor/config/param_sy870.yaml" />
+  
+  <node pkg="action_fused_pynode" type="action_fused_node_main.py" name="action_data_fusion_node" output="screen" />
+</launch>

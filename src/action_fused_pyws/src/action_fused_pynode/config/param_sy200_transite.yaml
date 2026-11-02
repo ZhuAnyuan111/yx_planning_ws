@@ -1,0 +1,85 @@
+# localization node param:
+# 动臂长度
+CF: 5703.5758
+# 斗杆长度
+FQ: 2929.9387
+# 铲斗长度
+QV: 1464.4056
+# 铲斗连杆长度
+QK: 485.0603
+# 斗杆端部销轴距离
+QN: 411.9954
+# 铲斗拉杆长度
+MK: 603.0119
+# 铲斗油缸撑杆长度
+MN: 640.2168
+# 斗杆三销轴角度(度)
+NQF: 5.0266
+# 铲斗连杆齿尖角度（度）
+KQV: 105.2532 
+# 车身IMU俯仰修正角
+delta_base: -0.76
+#车身IMU横滚修正角
+delta_base_roll: -0.74
+# 动臂IMU俯仰修正角
+delta_boom: -2.00
+# 斗杆IMU俯仰修正角
+delta_arm: -0.78
+# 铲斗IMU俯仰修正角
+delta_bucket: -0.6899
+# RTK航向修正角
+delta_RTK_heading: 0.2050
+# RTK安装与动臂铰点高度差
+W_W: 778.3672
+# RTK安装与动臂铰点前后差
+W_L: 2559.7315
+# RTK安装与动臂铰点左右差
+W_H: 1204.6987
+
+windshield_width: 1200
+
+operator_windshield_dist: 600
+
+windshield_boom_dist: 600
+
+
+# excavatorstate node param:
+# 车身IMU话题
+imu_vehicle_topic: /imu_topic_vehicle
+
+imu_boom_topic: /imu_topic_boom
+# 斗杆IMU话题
+imu_arm_topic: /imu_topic_arm
+# 铲斗IMU话题
+imu_bucket_topic: /imu_topic_bucket
+# 铲斗齿尖话题
+ef_tip_topic: /bucket_local_position
+# 铲斗齿尖数组大小
+ef_tip_size: 4
+# IMU数组大小
+joint_bucket_angle_size: 4
+# 移动距离判断大小 单位均是:M
+delta_distance: 0.01
+# 角度变化大小偏差
+delta_angle: 0.04
+# 铲斗姿态角度阈值
+bucket_attitude_angle_threshold: -2.6
+# 最大铲斗关节角
+max_bucket_joint_angle: -10.0
+# 最小铲斗关节角
+min_bucket_joint_angle: -60.0
+#撑车俯仰角判断大小 角度
+delta_dig_pitch: 4.0
+#挖掘距离设定阈值  单位:M
+delta_dig_distance: 0.2
+#回转角度开关标志位
+swivel_angle_flag: true
+#工作面绝对下高程
+working_alt_down: 15
+# 铲斗进入挖掘的切削角
+dig_cutting_angle: -5.0
+
+#挖机铲斗到矿卡车斗最小航向角度阈值
+min_swivel_angle: 75.0
+#挖机铲斗到矿卡车斗最大航向角度阈值
+max_swivel_angle: 105.0

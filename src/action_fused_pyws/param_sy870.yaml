@@ -1,0 +1,275 @@
+#############################################################################
+# localization node param:
+# 履带底面到动臂铰链的高度（毫米）
+# 虚拟回转中心与动臂铰链C平齐
+PC: 2699
+# 动臂长度
+CF: 6987
+# 斗杆长度
+FQ: 2797
+# 铲斗长度
+QV: 2359
+# 铲斗连杆长度
+QK: 680
+# 斗杆端部销轴距离
+QN: 643
+# 铲斗拉杆长度
+MK: 800
+# 铲斗油缸撑杆长度
+MN: 901
+# 斗杆三销轴角度(度)
+NQF: 10.46
+# 铲斗连杆齿尖角度（度）
+KQV: 104.858
+# 车身IMU俯仰修正角
+delta_base: -0.76
+#车身IMU横滚修正角
+delta_base_roll: -0.74
+# 动臂IMU俯仰修正角
+delta_boom: -1.4299
+# 斗杆IMU俯仰修正角
+delta_arm: -1.38
+# 铲斗IMU俯仰修正角
+delta_bucket: -0.6899
+# RTK航向修正角
+delta_RTK_heading: 0.0
+# RTK安装与动臂铰点高度差
+W_W: 778.3672
+# RTK安装与动臂铰点前后差
+W_L: 2559.7315
+# RTK安装与动臂铰点左右差
+W_H: 1204.6987
+#############################################################################
+
+windshield_width: 1200
+operator_windshield_dist: 600
+windshield_boom_dist: 600
+
+# excavatorstate node param:
+# # 车身IMU话题
+# imu_vehicle_topic: /imu_topic_vehicle
+# # 动臂IMU话题
+# imu_boom_topic: /imu_topic_boom
+# # 斗杆IMU话题
+# imu_arm_topic: /imu_topic_arm
+# # 铲斗IMU话题
+# imu_bucket_topic: /imu_topic_bucket
+# # 铲斗齿尖话题
+# ef_tip_topic: /bucket_local_position
+# # 铲斗齿尖数组大小
+# ef_tip_size: 4
+# # IMU数组大小
+# joint_bucket_angle_size: 4
+# # 移动距离判断大小 单位均是:M
+# delta_distance: 0.01
+# # 角度变化大小偏差
+# delta_angle: 0.04
+# # 铲斗姿态角度阈值
+# bucket_attitude_angle_threshold: -2.6
+# # 最大铲斗关节角
+# max_bucket_joint_angle: 0.0
+# 最小铲斗关节角
+min_bucket_joint_angle: -1.0
+#撑车俯仰角判断大小 角度
+delta_dig_pitch: 4.0
+#挖掘距离设定阈值  单位:M
+delta_dig_distance: 0.5
+# #回转角度开关标志位
+# swivel_angle_flag: true
+# 铲斗进入挖掘的切削角
+dig_cutting_angle: -0.68
+#############################################################################
+# imu_segment_working_device_node 
+# lidar to rotation_center   # transform_x >> transform_y >> transform_z >> rotate_z >> rotate_y >> rotate_x
+transform_lidar_vehicle_arg: "-2.83 -0.92 -1.17 0 34 0"
+
+## filter
+is_VoxelGrid: false
+voxel_size: 0.1
+is_StatisticalOutlierRemoval: false
+setMeanK: 40
+setStddevMulThresh: 3.0
+
+## range
+lidar_min_x: 1.5
+lidar_radius_range_min: 1.0  
+# lidar_radius_range_max: 40
+k_ratio: 2.0
+
+## debug
+CONSOLE_DEBUG: false
+TIMING_DEBUG: false
+VIS_DEBUG: false
+POINT_CLOUD_DEBUG: false
+
+## imu
+IMU_bias: [-1.99, -0.78, 1.09]  # 单位为度
+# Boom_Length_CF & Arm_Lentgh_FQ & Bkt_Length_QV
+# SY870
+# Geometric_Length: [7.0, 2.6, 2.3]
+# SY200
+Geometric_Length: [5.7001, 2.9291, 1.4605]
+# Swing_Center to Boom
+# Carriage_to_Boom_Offset: [0.18, 0, 1.048]
+# Carriage_to_Boom_Offset: [0.0991, 0.0342, 0.8]
+Carriage_to_Boom_Offset: [0.0991, 0.0342, 0.8]
+# Boom Root Point
+PointC: [0, 0, 0]
+# Point F Under PointC
+PointF: [6.00496, 0, 3.601372]
+# PointQ under PointF
+PointQ_F: [1.267355, 0, -2.268305]
+# PointV under PointQ
+PointV_Q: [0.0412, 0, -2.0836]
+# Define polygon shape, the points can be ordered differently, but they must have the same size
+# Polygon_XXX_Y defines the width of polygon, it should be a size(2) vector
+# Polygon_Boom_X: [0, 0.6, 2.6, 6.5, 6.5, 1, -0.1]
+# Polygon_Boom_Y: [-1, 1]
+# Polygon_Boom_Z: [0, -0.1, 2.0, 3.0, 6, 4, 0.8]
+# Polygon_Arm_X: [-0.1, 0.9, 2.3, 2.4, 1.2, -0.5]
+# Polygon_Arm_Y: [-1, 1]
+# Polygon_Arm_Z: [-0.6, -2.4, -2, -1.2, 2.4, 2.4]
+# Polygon_Bkt_X: [-0.38, 0.023, -0.048, -0.394, 1.536, 1.805, 1.727, 1.154, 0.553]
+# Polygon_Bkt_Y: [-2, 2]
+# Polygon_Bkt_Z: [-0.02, -0.692, -1.597, -2.424, -1.264, -0.762, -0.275, 0.171, 0.291]
+# SY870
+# Polygon_Boom_X: [-1.2, 2.8, 3.5, 7.9, 7.9]
+# Polygon_Boom_Y: [-1, 1]
+# Polygon_Boom_Z: [-0.5, 2.6, 2.6, 0.5, -0.5]
+# Polygon_Arm_X: [-0.35, -1.8, -1.0, 3.0, 3.0]
+# Polygon_Arm_Y: [-1, 1]
+# Polygon_Arm_Z: [-0.1, 0.45, 1.85, 0.55, -0.35]
+# Polygon_Bkt_X: [-0.2, 0.25, 1.2, 2.45]
+# Polygon_Bkt_Y: [-1.5, 1.5]
+# Polygon_Bkt_Z: [-0.15, 1.75, 1.75, -0.4]
+# SY200
+Polygon_Boom_X: [-1.0, 2.3, 2.9, 6.5, 6.5]
+Polygon_Boom_Y: [-1, 1]
+# Polygon_Boom_Z: [-0.42, 2.2, 2.2, 0.42, -0.2]
+# Polygon_Boom_Z: [-0.55, 2.2, 2.2, 0.55, -0.2]
+Polygon_Boom_Z: [-0.6, 2.2, 2.2, 0.6, -0.2]
+Polygon_Arm_X: [-0.4, -1.7, -1.2, 3.4, 3.4]
+Polygon_Arm_Y: [-1, 1]
+Polygon_Arm_Z: [-0.6, 0.6, 1.8, 0.8, -0.8]
+# Polygon_Bkt_X: [-0.5, -0.3, 1.0, 1.5, 2.2, 2.2, -0.5, 1.3]
+# Polygon_Bkt_Y: [-1.5, 1.5]
+# Polygon_Bkt_Z: [-0.5, 1.4, 1.4, 0.6, -0.7, -1.5, -1.5, -2.5]
+Polygon_Bkt_X: [-0.5, -0.5, 1.0, 2.4, 2.4]
+Polygon_Bkt_Y: [-1.5, 1.5]
+Polygon_Bkt_Z: [-2.5, 1.4, 1.6, 1.4, -2.5]
+# Polygon_Bkt_Z: [-3.0, 1.4, 1.6, 1.4, -3.0]
+
+Polygon_Platform_X: [2.4, 1.9, 0.04, -4.37, -4.37, 2.4, 1.9, 0.04, -4.37, -4.37, -0.01, 1.00,   1.00,  1.00,  0.00,  0.00, -0.01,  0.00,  1.00]
+Polygon_Platform_Y: [2.30, 2.30, 2.30, 2.30,  2.30,  0.68, 0.68, 0.68, -2.50, -2.50, -2.50, -2.50, -2.50, -0.73, -0.73,  0.69, -0.73, -2.50, -0.73]
+Polygon_Platform_Z: [-0.88, 1.02, 1.07, 0.42, -1.03, -0.88, 1.02, 1.07, 0.42, -1.03, 0.42,  -1.03,  0.50, -0.28, -0.28, -0.28,  0.42, -0.28, -1.03]
+Polygon_Chassis_X: [2.80, -3.50, -3.50, 2.80, 2.80, -3.50, -3.50, 2.80]
+Polygon_Chassis_Y: [2.50, 2.50, 2.50, 2.50, -2.50, -2.50, -2.50, -2.50]
+Polygon_Chassis_Z: [-2.80, -2.80, -0.50, -0.50, -2.80, -2.80, -0.50, -0.50]
+#############################################################################
+# excavation_to_gridmap_node1 
+# is_sub_terrain_pointcloud: false
+is_using_terrain_pointcloud: false
+input_lidar_topic: "/rslidar_points"
+#is_using_terrain_pointcloud: false
+#input_lidar_topic: "/terrain_pointcloud"
+output_map_topic: "/excavation_gridmap1"
+output_map_rotate_topic: "/excavation_gridmap"
+
+# rotation_center to rtk    # o2r_x  o2r_y  o2r_z
+# # rotation_center_to_rtk: [-1.5, 0.5, -1.5]
+# # rotation_center_to_rtk: [-1.21, 1.0, 0.5]
+rotation_center_to_rtk: [-1.4, 1.0, 0.5]
+working_alt_up: 18
+working_alt_down: 10
+
+is_using_roll_pitch: true
+is_using_initial_pose: false
+
+bucket_left: -1.2
+bucket_right: 1.2
+is_initial_gridmap_elevation: false
+working_z_up: 3.0
+working_z_down: -5.0
+
+## grid_map
+TerrainLength: 30
+TerrainResolution: 0.1
+TerrainUpdateAlpha: 1
+update_map_freq: 10.0
+publish_map_freq: 10.0
+
+## debug
+is_cout_debug: false
+flag_num: 0
+device_traj_y: 17
+#############################################################################
+# imu2joint_publisher_node 
+# 动臂关节角上限位(度)
+Boom_Limit_Upper: 59.58
+# 动臂关节角下限位(度)
+Boom_Limit_Lower: -27.18
+# 斗杆关节角上限位(度)
+Arm_Limit_Upper: -29.79
+# 斗杆关节角下限位(度)
+Arm_Limit_Lower: -152.98
+# 铲斗关节角上限位(度)
+Bkt_Limit_Upper: 47.55
+# 铲斗关节角下限位(度)
+Bkt_Limit_Lower: -116.31
+# 车身IMU俯仰修正角
+delta_platform_pitch: -0.76
+#车身IMU横滚修正角
+delta_platform_roll: -0.74
+# 动臂铰点基于回转中心的x坐标（上车朝正前方）
+relative_x: 0.09
+# 动臂铰点基于回转中心的y坐标（上车朝正前方）
+relative_y: 0.03
+# 动臂铰点基于回转中心的z坐标（上车朝正前方）
+relative_z: 0.8
+#基点经度
+lon0: 121.05945251
+#基点纬度
+lat0: 31.39355314
+#基点高度
+alt0: 12.431779
+#########################################################################
+#traj_fusion_node 
+arm_target_threshold: 70.0
+bucket_offset: 5.0
+boom_adjust_range: 5.0
+angle_arm_thresh: 5.0
+dig_v_arm_ub: 20.0
+dig_v_arm_lb: 10.0
+exc_bucket_H: 1.8
+bucket_to_angle: 3.0
+digover_boom: 20.0
+unload_height_offset: 1.0
+
+# 各阶段关节角度限制（度）：swing 回转, boom 动臂, arm 斗杆, bucket 铲斗
+# 复位阶段
+reset_swing_min: -180.0
+reset_swing_max: 180.0
+reset_boom_min: -30.0
+reset_boom_max: 90.0
+reset_arm_min: -180.0
+reset_arm_max: 0.0
+reset_bucket_min: -180.0
+reset_bucket_max: 90.0
+# 挖掘阶段
+dig_swing_min: -180.0
+dig_swing_max: 180.0
+dig_boom_min: -30.0
+dig_boom_max: 90.0
+dig_arm_min: -180.0
+dig_arm_max: 0.0
+dig_bucket_min: -180.0
+dig_bucket_max: 90.0
+# 卸载阶段
+unload_swing_min: -180.0
+unload_swing_max: 180.0
+unload_boom_min: -30.0
+unload_boom_max: 90.0
+unload_arm_min: -180.0
+unload_arm_max: 0.0
+unload_bucket_min: -180.0
+unload_bucket_max: 90.0

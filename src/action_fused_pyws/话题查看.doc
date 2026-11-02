@@ -1,0 +1,32 @@
+                                                        挖机状态话题
+cd /home/nvidia/unmanned_exca/action_fused_pyws
+source devel/setup.bash
+rostopic echo /Sys_SeqAction
+                                                        挖机斗数
+cd /home/nvidia/unmanned_exca/action_fused_pyws
+source devel/setup.bash
+rostopic echo /Sys_SUn_BucketNumber
+                                                        矿卡状态
+cd /home/nvidia/unmanned_exca/action_fused_pyws
+source devel/setup.bash
+rostopic echo /truck_pose_topic
+                                                        错误代码
+cd /home/nvidia/unmanned_exca/action_fused_pyws
+source devel/setup.bash
+rostopic echo /fault_code
+                                                        矿卡装卸高度数据
+cd /home/nvidia/unmanned_exca/action_fused_pyws
+source devel/setup.bash
+rostopic echo /delta_local_unload_ground
+                                                        矿卡是否满载
+cd /home/nvidia/unmanned_exca/action_fused_pyws
+source devel/setup.bash
+rostopic echo /FlagTruckFull
+                                                        当前齿尖离地高度
+cd /home/nvidia/unmanned_exca/action_fused_pyws
+source devel/setup.bash
+rostopic echo /bucket_terrain_delta_position
+
+
+                                                        设置满载判断阈值
+                                                        rosparam set /delta_unload_distance 0.2
