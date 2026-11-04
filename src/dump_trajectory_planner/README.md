@@ -12,8 +12,8 @@
 - 通过 [kinematics](../kinematics/README.md) 的 `swing_center_inverse_by_bucket_attitude` 做**真 IK 判定**，同时解算卸载点关节角；
 - 在**关节空间**生成 **4 关键航路点**（WP1/WP4/WP5/WP6），其中 WP4 入厢点由**回转圆与卡车厢矩形交点策略**确定；
 - 采用**基于航路点的在线规划**：每段基于实际关节角在线 PCHIP 插值，反馈驱动段推进；
-- **Seg0 两阶段策略**：swing 满功率阶跃回转到"卡车附近" + boom 直接阶跃到可配"中间角"（`seg0_boom_pchip_start_cof`，与 swing 进度解耦）并保持 + 高度门控 + Phase2 时间 PCHIP 从中间角平滑收尾到 WP4，兼顾效率与液压友好；
-- **铲斗高度门控**：Seg0 完成后，确认铲斗实际高度超过卡车上表面才允许跨越卡车；等待超时未达标时自动追加 boom 提升重试，次数耗尽则终止卸载；
+- **Seg0 两阶段策略**：swing 满功率阶跃回转到"卡车附近" + boom 阶跃到可配"中间角"（`seg0_boom_pchip_start_cof`）后立即并行 PCHIP 抬到 WP4 + **arm 条件打出（deploy）** + Phase2 时间 PCHIP 从实测值平滑收尾到 WP4，兼顾效率与液压友好；
+- **铲斗高度门控**：以"并行中断监视器 + 段边界兜底"形式生效（非串行闸门）：Seg0 Phase2 宽限期后逐帧监视齿尖高度，不足则转 boost 重试；段边界（`bucket_clear_seg_idx`）必判一次，未达标不推进；超时未达标自动追加 boom 提升，次数耗尽则终止卸载；
 - 以 10 Hz 流式逐帧发布 `/RefDeviceTraj_Unload`（纯位置指令，无速度前馈）；
 - 航路点定稿后发布卸载终点关节角 `/Sys_RUn_UnloadEndAngle`（latched，WP6/卸载点信息）；
 - **RViz 联调可视化**：卡车 3D 线框 + 挖掘机臂架线段 + WP 球体/标签 + WP4 回转圆 + 当前段轨迹折线 + 状态机调试文本。
@@ -201,14 +201,14 @@ Seg0（WP1→WP4）采用两阶段策略，兼顾效率与液压友好：
 
 ### 运动分配
 
-| 关节 | **Phase1**（回转 + boom 阶跃到中间角段） | **Phase2**（swing 到位 + 高度 OK 后） |
+| 关节 | **Phase1**（回转 + boom 抬升段） | **Phase2**（boom 到位后） |
 |---|---|---|
-| **boom** | **直接阶跃到"中间角" `mid = WP1.boom + cof·(WP4.boom − WP1.boom)`（`cof=seg0_boom_pchip_start_cof∈[0,1]`）并保持**，与 swing 进度解耦；plant 按液压能力快速抬升 | **时间 PCHIP 从 mid 收尾到 WP4**（低流量） |
-| **arm** | **保持起点不动**（零流量，避免与 boom 抢泵） | **阶跃外伸到 WP4.arm** |
-| **swing** | 阶跃到"卡车附近" `WP4.swing − sign×seg0_swing_offset_deg`，阀口**饱和回转** | PCHIP 续接到 WP4.swing，起点用 **Phase1 指令值**（保证指令连续），速度取**实测值**（保证斜率匹配） |
+| **boom** | **直接阶跃到"中间角" `mid = WP1.boom + cof·(WP4.boom − WP1.boom)`（`cof=seg0_boom_pchip_start_cof∈[0,1]`）**，随即从 mid **立即并行 PCHIP** 抬到 WP4.boom（不等 swing 到位）；播完保持 | **时间 PCHIP 从实测 boom 收尾到 WP4**（此时差≈0） |
+| **arm** | **条件打出（deploy）**：boom 到位（连续帧确认）后经 `IsArmDeploySafe()` 路径级预检放行，则以 `seg0_arm_deploy_dps` **限速追赶** WP4.arm（姿态保持下此动作**抬升齿尖 ~1.8m**）；预检不通过则冻结起点角 | PCHIP 起点 arm **直取 WP4.arm**，故 arm 在 Phase2 内恒平（deploy 已走完时无指令跳变；未放行时本帧一次打到 WP4） |
+| **swing** | 阶跃到"卡车附近" `WP4.swing − sign×seg0_swing_offset_deg`，阀口**饱和回转** | PCHIP 续接到 WP4.swing，起点用**实测值**（避免指令跑在实测前面播完、swing 带大滞后进入卸载），速度取实测值保斜率匹配 |
 | **bucket** | **每帧按实测 boom/arm 反馈实时算参考角**维持姿态（单向收斗） | PCHIP 到 WP4.bucket |
 
-> ⚠️ **cof 与厢帮安全**：高度门控只在 swing 到位那一刻检查齿尖高度，Phase1 回转途中 boom 停在 `mid`。若 `cof` 太小、`mid` 高度不足以越过厢帮，回转扫过时齿尖可能刮到车厢侧板；卸载点越近/起始位姿越低，`cof` 应调越大（`cof=1` 即一步阶跃到 WP4 高度）。
+> ⚠️ **cof 与厢帮安全**：Phase1 全程 + Phase2 宽限期内不判高度门控，回转途中 boom 只到 `mid`。若 `cof` 太小、`mid` 高度不足以越过厢帮，回转扫过时齿尖可能刮到车厢侧板；卸载点越近/起始位姿越低，`cof` 应调越大（`cof=1` 即一步阶跃到 WP4 高度）。
 
 ### Phase1 bucket 实时姿态保持
 
@@ -217,17 +217,45 @@ bucket_hold = bucket_attitude_target_deg − boom_实测 − arm_实测
 姿态角(用参考bucket评估) ≥ 目标 → 输出 bucket_hold(裁剪到限位)；否则保持上一帧
 ```
 
-### 切换条件（swing 到位 + 高度门控）
+> 注：deploy 期间 arm 在变，该式每帧重算 → bucket 随 arm 联动保姿态，铲斗不会因 arm 打出而张开。
 
-- `ShortestAngularDistanceDeg(swing实测, swing_Phase1目标) ≤ seg0_switch_threshold_deg(3°)` → **swing 到位**；
-- swing 到位后**立即检查高度门控**（不管 boom 是否到位）：
-  - 高度 OK → 切 Phase2；
-  - 高度不足 → 转 `kWaitBucketClear`（gate boost 抬 boom 直到齿尖高于卡车）；
-- **Phase1 独立超时**（`max(boom行程/seg0_boom_vel_dps, swing行程/seg0_phase1_swing_dps) × factor`）→ 转高度门控 boost 重试。
+### Seg0 斗杆条件打出（arm deploy）
+
+目的是消除 Phase1 的 arm 空窗期（旧设计 arm 全程冻结、整段行程被甩到 Phase1→Phase2 切换瞬间硬阶跃）。三重保护：
+
+1. **触发时机**：`|实测boom − WP4.boom| ≤ seg0_boom_deg` 且连续 `seg0_confirm_frames` 帧确认（防单帧反馈噪声与臂架液压振荡误触发）。可选 `seg0_arm_deploy_on_boom_arrived=false` 改为"即将到位"（`≤ seg0_boom_soon_deg`）即打出、与 boom 举升并行，但 arm 外伸也是高压动作，同帧抢泵流量风险高（默认关闭）。
+2. **放行判据 `IsArmDeploySafe()`**：对 arm∈[当前指令角, WP4.arm] 采样 FK（boom 取实测，bucket **复刻 Phase1 的逐帧单向姿态保持**），取全程**最低**齿尖高 `z_min_path` 与**最大**半径 `r_max_path`，满足其一即放行：
+   - `z_min_path > TruckTopHeight() + bucket_clear_margin_m`（全程不破门控）；
+   - **半径豁免**：`r_max_path < 外扩厢帮近边`（齿尖未进入厢帮方位，高度无关）。
+
+   > ✅ **打出 arm 是抬升齿尖的（姿态保持前提下）**：Phase1 每帧把 bucket 锁在 `A = bucket_attitude_target_deg(−180°)`，而 `sin(−180°)=0` → **斗齿对高度零贡献**，于是
+   > ```
+   > z = Lb·sin(boom) + La·sin(boom+arm)，  ∂z/∂arm = La·cos(boom+arm)
+   > 变号点：arm = −90° − boom   （boom=40.5° → −130.5°；boom=20° → −110°）
+   > ```
+   > 常规工况（arm > −90°−boom）打出 arm **单调抬高齿尖**：boom=40.5°、arm −117.6°→−60° 时 z 从 1.813 m 升到 **3.605 m（+1.79 m）**，而半径反而从 3.67 m 降到 5.68 m 以内（斗齿回卷）。故 deploy 不只是省时间，**还能主动弥补跨越厢帮的高度余量**（比 gate boost 的 +3° boom 约 +0.31 m 有效得多）。
+   >
+   > ⚠️ **建模陷阱（已踩）**：若把 bucket **固定为实测值**采样，会得到完全相反的结论——z 先降到谷底 1.309 m（arm≈−85°）再升到 1.614 m，终点差达 **2.0 m**，从而把有效的抬升动作误拦死。两种模型的分岔根源就是 `Lt·sin(A)` 是否被抵消。
+   >
+   > ⚠️ **仍保留「路径最低值」而非终态值**：低 boom（<25°）或过度卷收未锁姿态（`attitude < A`，bucket 冻结）时确有小幅下探（boom=20° 时 −0.145→−0.407 m）。若只校终态，途中跌破门控会触发 `StartGateBoost` 的 arm 反向内收（`Δarm = −Δboom` 保姿态），与打出动作**互相对抗**（反复振荡 / boost 耗尽 abort）。
+3. **执行方式**：限速追赶而非硬阶跃 —— 指令连续、无阀口冲击；因阀口本就饱和，时间收益与硬阶跃几乎相同。
+
+配套联动：
+- **Phase1→Phase2 跳转**改为 `(boom_arrived && arm_ready) || p1_timeout`，其中 `arm_ready` = deploy 未启用 / 未触发 / 已走完（预检拦下时**不阻塞**跳转，交给 Phase2 收尾）；
+- **Phase1 超时预算**：boom 与 swing 并行取 `max`，arm deploy 属 boom 到位后的**串行追加**用 `+`（用 max 会预算不足、在 arm 追赶途中误判超时）；
+- **Phase2 门控宽限期自适应** `seg0_phase2_grace_eff_sec_`：deploy 已走完 → 用配置值 `seg0_phase2_gate_grace_sec`（arm 恒平且打出本身已抬升齿尖）；deploy 未放行 → 拉长到 `max(配置值, Phase2 时长)`，因为此时预检已判定路径存在低于门控的下探、Phase2 首帧阶跃会重现它（高度安全由段边界 `AdvanceToNextSegment` 必判兜底）；
+- **状态复位**：`PlanCurrentSegment` 中每轮卸载都清零 `deploy_active/done/boom_arrived_count/grace_eff`，否则第二轮会带着上一轮的 `done=true` 跳过打出。
+
+### 切换条件（boom 到位，不再用 swing 串行闸门）
+
+- `|实测boom − WP4.boom| ≤ seg0_boom_deg(5°)` **且** `arm_ready` → 切 Phase2；
+- swing **不作串行闸门**（swing 是真机最慢关节，实测 ~5°/s，串行会让 arm 全程冻住、整流程易超时），在 Phase2 内靠"实测起点 + 时长含剩余行程"收敛；
+- 高度门控**不阻塞 Phase2 入口**（深卷 arm 下该位姿齿尖必然低于阈值，阻塞会死锁），仅 WARN，实际判定交给 Phase2 宽限期后的逐帧监视与段边界兜底；
+- **Phase1 独立超时**（`(max(boom行程/seg0_boom_vel_dps, swing行程/seg0_phase1_swing_dps) + arm行程/seg0_arm_deploy_dps) × factor`）→ 强制进 Phase2。
 
 ### Phase2 起点斜率衔接（防阀反向冲击）
 
-`v_start = VelocityEstimator::Estimate()`（arm 分量置 0，因 arm 已阶跃到位），并对时长施加 `p2_time ≤ 3Δ/|v_start|` 的 Fritsch-Carlson 可衔接约束。
+`v_start = VelocityEstimator::Estimate()`（arm 分量置 0，因 arm 已到位、Phase2 内 Δarm=0），并对时长施加 `p2_time ≤ 3Δ/|v|` 的 Fritsch-Carlson 可衔接约束（起/终点切线均校）。
 
 ## 状态机
 
@@ -255,16 +283,21 @@ kDone ──[SeqAction==4 再次触发]──► kPlanNextSegment
 ## 段完成判定
 
 - **归一化逐关节判据**：`max_j(err_j / tol_j) ≤ 1.0`（等价于所有主导关节各自达标 AND，修正了旧 `max(err)≤max(tol)` 会让松容差放过紧关节的漏洞）。
-- **N 帧确认防抖**：Seg0 用 `seg0_confirm_frames=8`（覆盖臂架抬升/回转段 0.5~2Hz 液压振荡模态），其余 `segment_confirm_frames=3`。
+- **N 帧确认防抖**：Seg0 用 `seg0_confirm_frames`，其余 `segment_confirm_frames=3`（两者当前均为 3；旧值 8 用于覆盖臂架 0.5~2Hz 液压振荡模态，实测过于保守、拖慢推进，已下调）。
 - **超时兜底**：`base_time = max(标称段时长, 实际规划时长)`，超时 = base × `segment_timeout_factor(2.0)`。Seg0 若门控未达标 → `kEnterGate`（不强推，安全第一）；否则强制推进。
 - Seg0 高度门控未达标时 `ComputeSegError` 直接返回 `1e6` 阻止完成。
 
 ## 高度门控与 boost 重试
 
-- **触发点**：Seg0 Phase1 期间 swing 到达"卡车附近"时（**早于 Seg0 完成**，提前检测高度不足）。swing 到位后不管 boom 是否到位，立即检查高度。
+- **触发点**（已从串行闸门降级为并行监视器 + 段边界兜底）：
+  - ① **Seg0 Phase2 逐帧监视**（仅 `current_seg_idx_ == 0` 生效）：宽限期 `seg0_phase2_grace_eff_sec_` 过后，每帧判齿尖高度，不足即 `kEnterGate`；
+  - ② **段边界兜底**：`AdvanceToNextSegment` 中 `current_seg_idx_ == bucket_clear_seg_idx_(0)` 时**必判一次**，通过则标记 "gate pre-cleared"（不清空速度历史、不停顿）；
+  - ③ **Phase1 入口不阻塞**：Phase1→Phase2 切换时高度不足仅 WARN（深卷位姿下齿尖必然低于阈值，阻塞会死锁）。
+  - ⚠️ **Seg1/Seg2 全程无高度复检**（条件①硬编码 `seg_idx == 0`），齿尖跨越近侧厢帮的安全完全押在 WP4/WP5 的规划高度上。
 - **判据**：齿尖 FK 高度 `bucket_height_ > TruckTopHeight() + bucket_clear_margin_m(0.5)`，其中 `TruckTopHeight() = truck_center_z − truck_height_offset(0.5)` 为**动态框高**（随 RTK 高度变化）。⚠️ **margin 必须低于 WP2 齿尖可达裕量**（本工况约 1.4m）：曾设 1.8 使阈值 2.21m 高于全部航路点齿尖（最高 1.81m），高度门控与 Seg0 Phase1→Phase2 切换双双死锁，boost 耗尽必然中止。
 - **等待期**：恒定发布**锁存姿态** `gate_hold_cmd_`（不跟随反馈，避免液压保压沉降被逐帧追认成下沉指令）。
-- **boost 重试**：`gate_timeout_sec(4s)` 超时 → boom+`gate_boost_boom_deg(3°)`、arm 反向联动(Δarm=-Δboom)保姿态；最多 `gate_max_boost_count(6)` 次，耗尽或 boom 到上限 → abort。
+- **boost 重试**：`gate_timeout_sec(2s)` 超时 → boom+`gate_boost_boom_deg(3°)`、arm 反向联动(Δarm=-Δboom)保姿态；最多 `gate_max_boost_count(4)` 次，耗尽或 boom 到上限 → abort。
+  - ⚠️ **boost 与 arm deploy 互斥**：boost 的 arm 反向内收与 deploy 的 arm 外伸方向相反，若同时生效会形成双向对抗/振荡。已由 `IsArmDeploySafe()` 的**路径最低值**判据（而非终态值）+ Phase2 宽限期自适应两道拦住。
 
 ## 对液压特性的适应
 
@@ -328,7 +361,7 @@ dump_trajectory_planner/
 | `kinematics/*` | `boom_length/arm_length/bucket_tooth_length` + 销轴偏置 + 6 项关节限位 | 由 `KinematicsSolver` 加载 |
 | `feasibility/*` | `enable_envelope_prefilter`、`reach_min/max`、`dump_height_min/max`、`bucket_attitude_deg` | 包络粗筛 + IK 判定 |
 | `waypoint/*` | `wp4_height_bias`、`truck_height_offset`、`wp4_bucket_angle_deg`、`p5_boom/arm_cof`、`bucket_limit_*_deg`、段速度（`seg0_boom_vel_dps`/`swing_vel_dps`/`seg0_arm_vel_dps`/`unload_boom_vel_dps`/`unload_arm_vel_dps`/`unload_bucket_vel_dps`）、`truck_box_length/width`、`wp4_R_coff`、**`bucket_width`、`bucket_wall_clearance`**（铲斗宽碰撞外扩） | 航路点生成（姿态角目标已并入 `online_plan/bucket_attitude_target_deg`）|
-| `online_plan/*` | `seg0_swing_deg/boom_deg`、`seg1_swing_deg`、`seg2_arm_deg/bucket_deg`、`seg0_confirm_frames`、`segment_confirm_frames`、`segment_timeout_factor`、`bucket_clear_margin_m`、`bucket_clear_seg_idx`、`gate_timeout_sec`、`gate_boost_boom_deg`、`gate_boost_tolerance_deg`、`gate_max_boost_count`、`waypoint_clamp_abort_deg`、**`seg0_switch_threshold_deg`、`seg0_phase1_swing_dps`、`seg0_min_step_factor`、`seg0_swing_offset_deg`、`seg0_boom_pchip_start_cof`、`bucket_attitude_target_deg`**、**`unload_selector_enable`、`unload_candidates_count`、`unload_bucket_far_count/mid_count/near_count`** | 在线规划、Seg0 两阶段与动态卸载点选取 |
+| `online_plan/*` | `seg0_swing_deg/boom_deg`、`seg1_swing_deg`、`seg2_arm_deg/bucket_deg`、`seg0_confirm_frames`、`segment_confirm_frames`、`segment_timeout_factor`、`bucket_clear_margin_m`、`bucket_clear_seg_idx`、`gate_timeout_sec`、`gate_boost_boom_deg`、`gate_boost_tolerance_deg`、`gate_max_boost_count`、`waypoint_clamp_abort_deg`、**`seg0_switch_threshold_deg`、`seg0_phase1_swing_dps`、`seg0_min_step_factor`、`seg0_swing_offset_deg`、`seg0_boom_pchip_start_cof`、`bucket_attitude_target_deg`**、**`seg0_phase2_gate_grace_sec`、`seg0_arm_deploy_enable`、`seg0_arm_deploy_dps`、`seg0_arm_deploy_path_samples`、`seg0_arm_deploy_on_boom_arrived`、`seg0_boom_soon_deg`、`seg0_arm_deploy_radius_exempt`**（斗杆条件打出）、**`unload_selector_enable`、`unload_candidates_count`、`unload_bucket_far_count/mid_count/near_count`** | 在线规划、Seg0 两阶段与动态卸载点选取 |
 | `visualization/*` | `enable`、`frame_id` | 可视化总开关与 marker 坐标系 |
 | 顶层 | `publish_rate`、`total_timeout_sec` | 全局 |
 
@@ -384,6 +417,7 @@ dump_trajectory_planner/
 - [x] ~~Phase2 起点切线衔接~~（`v_start=Estimate()` + 斜率可衔接约束）
 - [x] ~~bucket 实时姿态保持~~（每帧按实测 boom/arm 反馈计算参考 bucket）
 - [x] ~~动态卸载点选取~~（近点↔远点 21 候选 IK 验证 + 按斗数三档映射 + 三层降级）
+- [x] ~~Seg0 斗杆空窗期~~（新增 **arm 条件打出 deploy**：boom 到位带连续帧确认 → `IsArmDeploySafe()` 路径级预检（全程最低齿尖高过门控 **或** 最大半径未进厢帮方位则放行）→ `seg0_arm_deploy_dps` 限速追赶；配套跳转判据 `arm_ready`、超时预算串行追加、Phase2 宽限期自适应、每轮状态复位）
 - [ ] **实机/仿真运行验证**（最优先）；
 - [ ] 入厢点策略按卡车进入方向预筛选交点；
 - [ ] 端段 Hermite 切线优化：考虑用单侧差分替代端点零切线；

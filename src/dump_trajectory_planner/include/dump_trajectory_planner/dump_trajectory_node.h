@@ -8,7 +8,10 @@
 ///   - Seg0(WP1→WP4): boom + swing 双阶跃 + 高度门控 + PCHIP 平滑收尾的两阶段策略
 ///   - Seg1(WP4→WP5): PCHIP 插值，回转到卸载方位（完成=播完+swing 到位；boom 保持不下降）
 ///   - Seg2(WP5→WP6): PCHIP 插值，最终卸载姿态
-///   - Seg0 Phase1→Phase2 跳转看 boom 带容差到位；高度门控不阻塞入口，由 Phase2 宽限期后每帧检查与段边界检查兜底
+///   - Seg0 Phase1→Phase2 跳转看 boom 带容差到位（若 arm deploy 已触发则额外等它走完）；
+///     高度门控不阻塞入口，由 Phase2 宽限期后每帧检查与段边界检查兜底
+///   - Seg0 斗杆「条件打出」(arm deploy)：boom 到位后经 IsArmDeploySafe() 路径级预检放行，
+///     再限速追赶 WP4.arm，消除 Phase1 的 arm 空窗期
 ///   - 全部插值统一使用 PCHIP（保形，无超调）
 ///
 /// 触发协议：
@@ -109,6 +112,27 @@ class DumpTrajectoryNode {
 
   /// @brief 检查铲斗是否高于卡车框顶（齿尖高 > 框顶高 + 裕量）
   bool IsBucketAboveTruck() const;
+
+  /// @brief Seg0 斗杆「条件打出」安全判据（路径级预检）。
+  ///
+  /// 对 arm 从当前 Phase1 指令角到 WP4.arm 的路径采样 FK：boom 取实测值，bucket
+  /// 【复刻 Phase1 的逐帧单向姿态保持】（bucket_ref = clamp(A − boom − arm)，仅当
+  /// boom+arm+bucket_ref ≥ A 时生效）。取全程最低齿尖高 z_min_path 与最大水平半径
+  /// r_max_path，放行条件（满足其一）：
+  ///   1) z_min_path > TruckTopHeight() + bucket_clear_margin_m_（全程不破门控）；
+  ///   2) 半径豁免：r_max_path < 外扩厢帮近边（齿尖未进入帮的方位，高度无关）。
+  ///
+  /// ⚠️ 姿态保持建模直接决定结论的正负号：A=−180° 时 Lt·sin(A)=0（斗齿对高度零贡献），
+  /// z = Lb·sin(boom) + La·sin(boom+arm)，dz/darm = La·cos(boom+arm)，变号点在
+  /// arm = −90° − boom（boom=40.5° → −130.5°）→ 常规工况打出 arm 是【抬升】齿尖
+  /// （实测 +1.8m 量级），能主动弥补跨越厢帮的高度余量；若误按 bucket 恒定采样，会
+  /// 得到相反的“谷底在 arm≈−85°、下探跌破门控”结论（终点差达 2.0m）而误拦死 deploy。
+  /// 仍保留「路径最低值」判据：低 boom（<25°）或过度卷收未锁姿态时确有小幅下探，
+  /// 若只校终态，途中跌破门控会触发 StartGateBoost 的 arm 反向内收与打出动作对抗。
+  /// @param[out] z_min_path 路径最低齿尖高 (m, base 系)
+  /// @param[out] r_max_path 路径最大齿尖水平半径 (m, 相对回转中心)
+  /// @return true=允许打出
+  bool IsArmDeploySafe(double& z_min_path, double& r_max_path) const;
 
   /// @brief 启动门控自动 boom 提升小段（boom 抬升 + arm 联动保姿态）
   /// @return false=boom 已达上限无法提升，调用方应终止卸载
@@ -222,6 +246,17 @@ class DumpTrajectoryNode {
   double seg0_boom_pchip_start_cof_ = 0.5; // Phase1 boom 阶跃"中间角"比例∈[0,1]：mid = WP1.boom + cof·(WP4.boom − WP1.boom)；boom 阶跃到 mid 后立即并行 PCHIP 到 WP4.boom（与 swing 阶跃同步，不等 swing 到位）
   double bucket_attitude_target_deg_ = -180.0;  // 铲斗姿态角目标（boom+arm+bucket）单一真源：Seg0 Phase1 逐帧维持 + 航路点生成侧 AdjustBucketByAttitude 共用
 
+  // ---- Seg0 斗杆条件打出（arm deploy）参数 ----
+  // 目的：消除 Phase1 的 arm 空窗期（原设计 arm 全程冻结在起点角）。
+  // 触发：boom 到位（带连续帧确认）后，经 IsArmDeploySafe 路径级预检放行，
+  //       再以限速追赶（非硬阶跃）把 arm 送到 WP4.arm。
+  bool seg0_arm_deploy_enable_ = true;         // 总开关：false 时 arm 在 Phase1 保持起点角（原行为）
+  double seg0_arm_deploy_dps_ = 18.0;          // 限速打出速率(deg/s)：替代硬阶跃，防阀口冲击与抢泵流量
+  int seg0_arm_deploy_path_samples_ = 12;      // 路径采样点数：arm∈[当前,WP4.arm] 逐点 FK
+  bool seg0_arm_deploy_on_boom_arrived_ = true; // true=boom 到位(带确认)后打出；false=boom「即将到位」(≤seg0_boom_soon_deg_)即打出（与 boom 举升并行，抢泵流量风险高）
+  double seg0_boom_soon_deg_ = 8.0;            // 「boom 即将到位」阈值(deg)，仅 on_boom_arrived=false 时生效
+  bool seg0_arm_deploy_radius_exempt_ = true;  // 半径豁免：外伸路径最大齿尖半径 < 外扩厢帮近边时，不要求高度过门控
+
   // ---- 状态机 ----
   DumpPhase phase_ = DumpPhase::kIdle;
 
@@ -245,15 +280,29 @@ class DumpTrajectoryNode {
   size_t seg_frame_idx_ = 0;
 
   // ---- Seg0 两阶段状态 ----
-  bool seg0_phase1_complete_ = false;      // Phase 1 是否完成进入 Phase 2：跳转条件=|实测boom−WP4.boom|≤seg0_boom_tolerance_deg_（或 Phase1 超时兜底强跳）
-  kinematics::JointState seg0_phase1_cmd_; // Phase 1 指令：boom=阶跃到中间角并保持, arm 保持, swing=阶跃到"卡车附近"(WP4−offset), bucket 维持姿态
-  double seg0_phase1_timeout_sec_ = 0.0;   // Phase 1 独立超时(s)=行程/seg0_boom_vel_dps×factor；超时强制进 Phase2（防卡死兜底）
+  bool seg0_phase1_complete_ = false;      // Phase 1 是否完成进入 Phase 2：跳转条件=(|实测boom−WP4.boom|≤seg0_boom_tolerance_deg_ 且 arm_ready)（或 Phase1 超时兜底强跳）；arm_ready = deploy 未启用/未触发/已走完
+  kinematics::JointState seg0_phase1_cmd_; // Phase 1 指令：boom=阶跃到中间角后并行 PCHIP 抬升, arm=冻结起点角或 deploy 限速追赶 WP4.arm, swing=阶跃到"卡车附近"(WP4−offset), bucket 维持姿态
+  double seg0_phase1_timeout_sec_ = 0.0;   // Phase 1 独立超时(s)=(max(boom行程/seg0_boom_vel_dps, swing行程/seg0_phase1_swing_dps) + arm行程/seg0_arm_deploy_dps)×factor；arm deploy 属 boom 到位后的串行追加故用加法；超时强制进 Phase2（防卡死兜底）
   // Phase1 boom 阶跃目标：mid = WP1.boom + cof·(WP4.boom − WP1.boom)，与 swing 进度解耦。
   // boom 阶跃到 mid 后立即沿 seg0_p1_boom_traj_ 并行 PCHIP 到 WP4.boom（不等 swing 到位）；
   // Phase2 从实测 boom 续接收尾（此时差≈0）。
   double seg0_p1_boom_mid_rad_ = 0.0;      // Phase1 boom 阶跃目标角（中间角，rad）
   std::vector<kinematics::JointState> seg0_p1_boom_traj_;  // Phase1 boom 并行 PCHIP 轨迹（mid→WP4.boom，按发布率采样）
   double seg0_p1_boom_time_sec_ = 0.0;     // 上述 PCHIP 时长(s) = |WP4.boom − mid| / seg0_boom_vel_dps
+
+  // ---- Seg0 斗杆条件打出状态 ----
+  bool seg0_arm_deploy_active_ = false;    // deploy 已触发：arm 正按 seg0_arm_deploy_dps_ 限速追赶 WP4.arm
+  bool seg0_arm_deploy_done_ = false;      // arm 指令已到达 WP4.arm（Phase1→Phase2 跳转与衔接判据用）
+  int seg0_boom_arrived_count_ = 0;        // boom 到位连续帧计数（防单帧反馈噪声误触发 deploy）
+  ros::Time seg0_arm_deploy_time_;         // deploy 触发时刻（日志统计用）
+  double seg0_phase2_grace_eff_sec_ = 0.0; // Phase2 门控宽限期实际生效值：
+                                           // deploy 已走完 → = seg0_phase2_gate_grace_sec_（arm 在 Phase2 内恒平，
+                                           //   且姿态保持下打出 arm 本就把齿尖抬升 ~1.8m，无需额外宽限）；
+                                           // deploy 被预检拦下 → = max(配置值, Phase2 时长)：此时预检已判定沿 arm
+                                           //   路径 z_min ≤ gate（低 boom / 未锁姿态的下探工况），Phase2 首帧把 arm
+                                           //   一次打到 WP4 会重现该下探，宽限期须覆盖整段，否则途中破门控触发
+                                           //   boost 的 arm 反向内收、与外伸指令对抗。高度安全由段边界
+                                           //   （AdvanceToNextSegment）兜底必判保证。
 
   // ---- 门控自动提升状态 ----
   ros::Time gate_start_time_;              // 进入门控（或上次提升完成）的时刻

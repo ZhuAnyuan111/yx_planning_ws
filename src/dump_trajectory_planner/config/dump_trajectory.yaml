@@ -37,7 +37,7 @@ waypoint:
 
   # WP4 铰接点相对卡车表面的高度偏置 (m)
   # 铰接点目标高度 = (truck_center_z - truck_height_offset) + wp4_height_bias
-  wp4_height_bias: 3.0
+  wp4_height_bias: 2.0
 
   # 卡车框高度偏移 (m)：卡车框高度 = truck_center_z - truck_height_offset
   truck_height_offset: 0.5
@@ -50,7 +50,7 @@ waypoint:
   p5_arm_cof: 0.5
 
   # 段主导关节速度 (deg/s)——命名按"段+关节"语义（旧 wp2/wp4/wp5_ 编号已废弃）
-  seg0_boom_vel_dps:      10.0   # Seg0(WP1→WP4) boom 抬升速率；亦用于 Phase1/门控 boost 限速与超时估算
+  seg0_boom_vel_dps:      15.0   # Seg0(WP1→WP4) boom 抬升速率；亦用于 Phase1/门控 boost 限速与超时估算
   swing_vel_dps:          15.0   # swing 回转速率（Seg0 与 Seg1 共用）
   seg0_arm_vel_dps:       15.0   # Seg0 arm 速率（仅用于段时间/超时预算）
   unload_boom_vel_dps:     8.0   # Seg1+Seg2 boom 速率
@@ -64,7 +64,7 @@ waypoint:
   # ---- WP4 入厢点（回转圆策略，照 MATLAB calc_entry_point_circle_strategy）----
   truck_box_length: 5.0        # 卡车厢长 L (m)
   truck_box_width:  2.6        # 卡车厢宽 W (m)
-  wp4_R_coff:       0.3        # 回转圆半径混合系数：R = coff·R_dig_end + (1-coff)·R_unload
+  wp4_R_coff:       0.2        # 回转圆半径混合系数：R = coff·R_dig_end + (1-coff)·R_unload
 
   # ---- 铲斗宽度碰撞（配置空间外扩 / Minkowski 膨胀卡车框）----
   # 卡车框每边外扩 outset = 0.5·bucket_width + bucket_wall_clearance 后再与回转圆求交：
@@ -110,7 +110,11 @@ online_plan:
   seg0_boom_deg: 5.0
   seg0_height_gate: true   # WP1→WP4 是否同时要求铲斗高度 > truck_top + margin
   # Phase2 启动后的宽限期 (s)：期内不判每帧高度门控，允许 boom 先从中间角 PCHIP 抬升到
-  # WP4；超期后若齿尖仍低于 truck_top + margin 才门控 boost 介入（防刮帮兜底）
+  # WP4；超期后若齿尖仍低于 truck_top + margin 才门控 boost 介入（防刮帮兜底）。
+  # 注：实际生效值为自适应值 —— 若 Seg0 斗杆 deploy 已在 Phase1 走完（arm 在 Phase2 内恒平）
+  # 则用本配置值；若 deploy 被路径预检拦下（Phase2 首帧把 arm 一次打到 WP4），则自动拉长到
+  # max(本值, Phase2 时长)：此时预检已判定沿 arm 路径存在低于门控的下探（低 boom / 未锁姿态
+  # 工况），Phase2 首帧阶跃打出 arm 会重现它，避免途中破门控触发 boost 反向内收 arm 对抗。
   seg0_phase2_gate_grace_sec: 2.0
   seg1_swing_deg: 5.0      # Seg1 完成判据：指令播完 且 |swing 误差| ≤ 该值（连续 segment_confirm_frames 帧确认）
   seg2_arm_deg: 10.0       # [已停用] Seg2 完成不再检查斗杆(arm)
@@ -121,7 +125,7 @@ online_plan:
 
   # Seg0(WP1→WP4) 专用确认帧数：boom 阶跃后臂架存在 0.5~2Hz 液压振荡模态，
   # 需更长确认窗（默认 8 帧=0.8s @10Hz）防止振荡中途误判达标 / 高度门控被瞬时值抖过
-  seg0_confirm_frames: 8
+  seg0_confirm_frames: 3
 
   # 段超时倍率：实际耗时 > 预期段时间 × 该值 则强制推进
   segment_timeout_factor: 2.0
@@ -136,7 +140,7 @@ online_plan:
   bucket_clear_seg_idx: 0       # 段0完成后触发门控，确保铲斗高于卡车再进入卸载
 
   # 门控等待超时 (s)：超时未达标自动追加一小段 boom 提升后重试
-  gate_timeout_sec: 4.0
+  gate_timeout_sec: 2.0
 
   # 每次自动提升的 boom 角度 (deg)，arm 联动保持铲斗姿态
   gate_boost_boom_deg: 3.0
@@ -146,7 +150,7 @@ online_plan:
   gate_boost_tolerance_deg: 1.0
 
   # 最大自动提升次数：超过仍不达标则终止卸载（防止无限制提升）
-  gate_max_boost_count: 6
+  gate_max_boost_count: 4
 
   # 航路点限位校验：clamp 修正量超过该值时判定上游航路点不可信，终止激活 (deg)
   waypoint_clamp_abort_deg: 5.0
@@ -172,6 +176,29 @@ online_plan:
   #   0=不抬(停在实时角)、1=直接阶跃到 WP4 高度；调大→Phase1 抬得越高(跨越厢帮越安全)
   # 上机实测：0.5 时 Phase1 齿尖过低(-0.95m)触发门控 boost 爬不上去、30s 超时中止；抬到 0.8 让 Phase1 就把 boom 顶高、齿尖先过阈
   seg0_boom_pchip_start_cof: 0.8
+
+  # ---- Seg0 斗杆「条件打出」（arm deploy）----
+  # 背景：原设计 Phase1 全程冻结 arm（恒为起点角），arm 的整段行程被甩到 Phase1→Phase2
+  # 切换瞬间硬阶跃完成，既留了空窗期、又产生一次大指令跳变。deploy 把它前移到 Phase1 内，
+  # 用「boom 到位 + 路径级安全预检放行 + 限速追赶」三步把空窗期消掉。
+  # 额外收益：Phase1 逐帧锁 bucket 姿态(=bucket_attitude_target_deg)，sin(−180°)=0 使斗齿对高度
+  # 零贡献，于是 dz/darm = La·cos(boom+arm)、变号点在 arm=−90°−boom；常规工况打出 arm 是
+  # 【单调抬升齿尖】（boom=40.5°、−117.6°→−60° 约 +1.79m），可主动弥补跨越厢帮的高度余量。
+  seg0_arm_deploy_enable: true          # 总开关：false = arm 在 Phase1 保持起点角（原行为）
+  # 限速打出速率(deg/s)：替代硬阶跃，指令连续、无阀口冲击。
+  # 因阀口本就饱和，调大不会更快（实测滞后主导），只增加流量争抢；18 与 swing/boom 同量级
+  seg0_arm_deploy_dps: 18.0
+  # 路径预检采样点数：arm∈[当前指令角, WP4.arm] 等分采样逐点 FK，取全程最低齿尖高与最大半径
+  seg0_arm_deploy_path_samples: 12
+  # 触发时机：true = boom「到位」(|实测−WP4.boom| ≤ seg0_boom_deg，且连续 seg0_confirm_frames
+  # 帧确认，防臂架液压振荡误触发)后打出；false = boom「即将到位」(≤ seg0_boom_soon_deg)即打出，
+  # 与 boom 举升并行、更省时间，但 arm 外伸也是高压动作，同帧抢泵流量风险高（默认关闭）
+  seg0_arm_deploy_on_boom_arrived: true
+  seg0_boom_soon_deg: 8.0               # 「boom 即将到位」阈值(deg)，仅上项=false 时生效
+  # 半径豁免：外伸路径最大齿尖半径 < 外扩厢帮近边（回转中心→厢中心距离 − 厢体径向半宽
+  # − (斗半宽+间隙)）时，齿尖根本没进入厢帮方位，高度是否过门控无关 → 直接放行。
+  # 关掉后只按「路径最低齿尖高 > truck_top + margin」判，更保守但深卷工况常拦死 deploy
+  seg0_arm_deploy_radius_exempt: true
   # 铲斗姿态角目标（boom+arm+bucket，有符号 deg）——【单一真源】：
   #   ① Seg0 Phase1 每帧按实测 boom/arm 反馈计算参考 bucket 维持该姿态
   #      （当前姿态角 >= 该值时才回调收斗，单向，不反向张斗）；

@@ -171,6 +171,19 @@ void DumpTrajectoryNode::LoadParams() {
                      pnh_.param("online_plan/seg0_boom_pchip_start_cof", 0.5)),
                  0.0, 1.0);
 
+  // ---- Seg0 斗杆条件打出（arm deploy）----
+  seg0_arm_deploy_enable_ =
+      pnh_.param("online_plan/seg0_arm_deploy_enable", true);
+  seg0_arm_deploy_dps_ =
+      pnh_.param("online_plan/seg0_arm_deploy_dps", 18.0);
+  seg0_arm_deploy_path_samples_ =
+      pnh_.param("online_plan/seg0_arm_deploy_path_samples", 12);
+  seg0_arm_deploy_on_boom_arrived_ =
+      pnh_.param("online_plan/seg0_arm_deploy_on_boom_arrived", true);
+  seg0_boom_soon_deg_ = pnh_.param("online_plan/seg0_boom_soon_deg", 8.0);
+  seg0_arm_deploy_radius_exempt_ =
+      pnh_.param("online_plan/seg0_arm_deploy_radius_exempt", true);
+
   // ---- 动态卸载点选取 ----
   unload_selector_enable_ =
       pnh_.param("online_plan/unload_selector_enable", true);
@@ -763,11 +776,76 @@ void DumpTrajectoryNode::TimerCallback(const ros::TimerEvent& /*event*/) {
               waypoint_params_.bucket_limit_lower_deg,
               std::min(waypoint_params_.bucket_limit_upper_deg, Rad2Deg(bucket_hold_rad))));
         }
-        // 发布指令（boom=阶跃到中间角后立即 PCHIP 升 WP4.boom, arm 保持不变, swing=阶跃到"卡车附近", bucket 实时维持姿态）
+        // ---- arm 条件打出（deploy）：boom 到位后限速送到 WP4.arm ----
+        // 目的：消除 Phase1 的 arm 空窗期（原设计 arm 恒为起点角、全程不动）。
+        // 三重保护：
+        //  1) 触发时机：boom 到位（带 seg0_confirm_frames_ 连续帧确认，防单帧
+        //     反馈噪声/臂架液压振荡误触发）；可选“即将到位”模式（on_boom_arrived=false）
+        //     与 boom 举升并行，但 arm 外伸是高压动作，同帧抢泵流量风险高，默认关闭。
+        //  2) 放行判据：IsArmDeploySafe() 路径级预检（bucket 按 Phase1 逐帧姿态保持建模）。
+        //     姿态锁 −180° 时 Lt·sin(A)=0、斗齿对高度零贡献，dz/darm = La·cos(boom+arm)，
+        //     变号点在 arm = −90°−boom（boom=40.5° → −130.5°）→ 常规工况打出 arm 是
+        //     【抬升】齿尖（+1.8m 量级），反而主动弥补跨越厢帮的高度余量；仅低 boom
+        //     （<25°）或过度卷收未锁姿态时存在小幅下探，故仍校「路径最低值」，避免途中
+        //     跌破门控触发 StartGateBoost 的 arm 反向内收、与打出动作对抗（振荡/abort）。
+        //  3) 执行方式：限速追赶（seg0_arm_deploy_dps_）而非硬阶跃，指令连续、
+        //     无阀口冲击；因阀口本就饱和，时间收益与硬阶跃几乎相同。
+        if (seg0_arm_deploy_enable_ && !seg0_arm_deploy_done_) {
+          const double dep_boom_err =
+              std::abs(Rad2Deg(current_joint_.boom - waypoints_[1].boom));
+          const double dep_boom_thr = seg0_arm_deploy_on_boom_arrived_
+                                          ? seg0_boom_tolerance_deg_
+                                          : seg0_boom_soon_deg_;
+          if (dep_boom_err <= dep_boom_thr) {
+            ++seg0_boom_arrived_count_;
+          } else {
+            seg0_boom_arrived_count_ = 0;
+          }
+          const bool boom_ready =
+              (dep_boom_err <= dep_boom_thr) &&
+              (!seg0_arm_deploy_on_boom_arrived_ ||
+               seg0_boom_arrived_count_ >= seg0_confirm_frames_);
+          if (!seg0_arm_deploy_active_ && boom_ready) {
+            double z_min_path = 0.0;
+            double r_max_path = 0.0;
+            if (IsArmDeploySafe(z_min_path, r_max_path)) {
+              seg0_arm_deploy_active_ = true;
+              seg0_arm_deploy_time_ = ros::Time::now();
+              ROS_INFO("[dump_traj] seg0 arm deploy START: arm %.2f -> %.2f deg, "
+                       "boom_err=%.2f deg (thr %.2f, confirm %d/%d frames), "
+                       "rate-limited %.1f deg/s (not hard step)",
+                       Rad2Deg(seg0_phase1_cmd_.arm),
+                       Rad2Deg(waypoints_[1].arm), dep_boom_err, dep_boom_thr,
+                       seg0_boom_arrived_count_, seg0_confirm_frames_,
+                       seg0_arm_deploy_dps_);
+            }
+          }
+          if (seg0_arm_deploy_active_) {
+            const double target_deg = Rad2Deg(waypoints_[1].arm);
+            const double cur_deg = Rad2Deg(seg0_phase1_cmd_.arm);
+            const double remain_deg = target_deg - cur_deg;
+            const double step_deg = seg0_arm_deploy_dps_ / publish_rate_hz_;
+            if (std::abs(remain_deg) <= step_deg) {
+              seg0_phase1_cmd_.arm = Deg2Rad(target_deg);
+              seg0_arm_deploy_done_ = true;
+              ROS_INFO("[dump_traj] seg0 arm deploy DONE in %.2fs: arm cmd=%.2f deg "
+                       "(measured %.2f deg) -> Phase2 arm segment is flat",
+                       (ros::Time::now() - seg0_arm_deploy_time_).toSec(),
+                       target_deg, Rad2Deg(current_joint_.arm));
+            } else {
+              seg0_phase1_cmd_.arm =
+                  Deg2Rad(cur_deg + std::copysign(step_deg, remain_deg));
+            }
+          }
+        }
+        // 发布指令（boom=阶跃到中间角后立即 PCHIP 升 WP4.boom, arm=冻结起点角或
+        // deploy 后限速追赶 WP4.arm, swing=阶跃到"卡车附近", bucket 实时维持姿态）
         PublishTrajectoryFrame(seg0_phase1_cmd_, true);
         // Phase1→Phase2 跳转条件（用户规格 2026-10-19）：实际 boom 提升到 WP4.boom 附近
-        // （|Δ| ≤ seg0_boom_tolerance_deg_）即跳转，Phase2 里 arm 开始外伸，与 swing 收敛
-        // 并行。不再用"swing 到位"作串行闸门：swing 是真机最慢关节（实测~5°/s），串行
+        // （|Δ| ≤ seg0_boom_tolerance_deg_）即跳转；若 arm deploy 已触发，额外等它走完
+        // （arm_ready），避免 Phase2 起点 arm 落后导致重复外伸与门控反复振荡；deploy 未
+        // 放行（路径预检不通过）时不阻塞，交给 Phase2 的 arm 段照常收尾。
+        // 不用"swing 到位"作串行闸门：swing 是真机最慢关节（实测~5°/s），串行
         // 闸门会让 arm 全程冻住、整流程易超时。
         const double boom_err_deg =
             std::abs(Rad2Deg(current_joint_.boom - waypoints_[1].boom));
@@ -776,7 +854,11 @@ void DumpTrajectoryNode::TimerCallback(const ros::TimerEvent& /*event*/) {
         const double p1_elapsed = (ros::Time::now() - seg_start_time_).toSec();
         const bool boom_arrived = boom_err_deg <= seg0_boom_tolerance_deg_;
         const bool p1_timeout = p1_elapsed > seg0_phase1_timeout_sec_;
-        if (boom_arrived || p1_timeout) {
+        // arm_ready：deploy 未启用 / 未触发 / 已走完 → 不阻塞跳转
+        const bool arm_ready = !seg0_arm_deploy_enable_ ||
+                               !seg0_arm_deploy_active_ ||
+                               seg0_arm_deploy_done_;
+        if ((boom_arrived && arm_ready) || p1_timeout) {
           // 兜底：Phase1 超时（boom 未到位且卡滞）强制进 Phase2——arm 先动起来，swing
           // 在 Phase2 内靠"实测起点+时长含剩余行程"收敛，避免 Phase1 长时间卡死。
           // 高度门控不阻塞 Phase2 入口：深卷 arm 下该位姿齿尖必然低于阈值，阻塞会
@@ -807,7 +889,11 @@ void DumpTrajectoryNode::TimerCallback(const ros::TimerEvent& /*event*/) {
           kinematics::JointState phase2_start = current_joint_;
           double sw_diff = NormalizeRadToPi(phase2_start.swing - wp4.swing);
           phase2_start.swing = wp4.swing + sw_diff;
-          // arm 阶跃：切换时刻斗杆直接命令到 WP4 目标角
+          // arm 收尾：Phase2 的 PCHIP 起点 arm 直接取 WP4.arm，故 arm 在 Phase2 内恒平。
+          // 指令跳变量 = |WP4.arm − Phase1 末帧指令 arm|：deploy 已走完时为 0（无跳变）；
+          // deploy 被路径预检拦下时等于整段行程（原设计行为，此时宽限期自适应拉长）。
+          const double arm_cmd_jump_deg =
+              std::abs(Rad2Deg(wp4.arm - seg0_phase1_cmd_.arm));
           phase2_start.arm = wp4.arm;
           // 计算 Phase 2 时长（arm 已阶跃到位，仅 boom/swing 决定时长）
           double p2_boom_diff = std::abs(Rad2Deg(wp4.boom - phase2_start.boom));
@@ -844,6 +930,16 @@ void DumpTrajectoryNode::TimerCallback(const ros::TimerEvent& /*event*/) {
               p2_time, 1.0 / publish_rate_hz_);
           seg_frame_idx_ = 0;
           seg_planned_time_ = p2_time;
+          // Phase2 门控宽限期自适应：deploy 已走完 → arm 在 Phase2 内恒平，且姿态保持下
+          // 打出 arm 本就把齿尖抬升（boom=40.5° 时 −117.6°→−60° 约 +1.8m），用配置宽限期
+          // 即可；deploy 未放行 → 预检已判定沿 arm 路径 z_min ≤ gate（低 boom / 未锁姿态的
+          // 下探工况），而本帧 arm_cmd_jump 会把斗杆一次打到 WP4、重现该下探，若宽限期
+          // 短于 Phase2 时长则途中跌破门控 → StartGateBoost 反向内收 arm 与外伸指令对抗。
+          // 故此时宽限期覆盖整段，高度安全由段边界 AdvanceToNextSegment 的必判兜底。
+          seg0_phase2_grace_eff_sec_ =
+              (seg0_arm_deploy_enable_ && seg0_arm_deploy_done_)
+                  ? seg0_phase2_gate_grace_sec_
+                  : std::max(seg0_phase2_gate_grace_sec_, p2_time);
           seg_start_time_ = ros::Time::now();
           confirm_count_ = 0;
           visualizer_.PublishSegmentTrajectory(seg_trajectory_, *solver_);
@@ -860,6 +956,16 @@ void DumpTrajectoryNode::TimerCallback(const ros::TimerEvent& /*event*/) {
                    seg_trajectory_.size(), p2_time,
                    std::chrono::duration<double, std::milli>(
                        std::chrono::steady_clock::now() - p2_t0).count());
+          if (arm_cmd_jump_deg > 1.0) {
+            ROS_WARN("[dump_traj] seg0 Phase2 arm cmd jump %.2f deg (deploy %s), "
+                     "gate grace extended %.1f -> %.2fs to cover whole Phase2 "
+                     "(avoid boost fighting arm extension); height safety falls "
+                     "back to segment-boundary check",
+                     arm_cmd_jump_deg,
+                     seg0_arm_deploy_enable_ ? "withheld by path check"
+                                             : "disabled",
+                     seg0_phase2_gate_grace_sec_, seg0_phase2_grace_eff_sec_);
+          }
         }
         break;
       }
@@ -1043,6 +1149,12 @@ void DumpTrajectoryNode::PlanCurrentSegment() {
         (boom_rise_deg >= seg0_min_step_factor_ * seg0_switch_threshold_deg_);
     // 非两阶段：直接标记 Phase1 完成，走通用 PCHIP 执行分支
     seg0_phase1_complete_ = !seg0_two_phase;
+    // arm deploy 状态复位：每轮卸载（含重规划 Seg0）都必须清零，否则第二轮会带着
+    // 上一轮的 done=true 直接跳过打出，arm 退回全程冻结的旧行为。
+    seg0_arm_deploy_active_ = false;
+    seg0_arm_deploy_done_ = false;
+    seg0_boom_arrived_count_ = 0;
+    seg0_phase2_grace_eff_sec_ = 0.0;
     if (seg0_two_phase) {
       seg0_phase1_cmd_ = seg_start;  // arm/bucket/swing/boom 先继承起点
       // boom 阶跃到"中间角"（与 swing 进度解耦，替代旧"随 swing 进度连续插值抬升"）：
@@ -1068,9 +1180,11 @@ void DumpTrajectoryNode::PlanCurrentSegment() {
         seg0_p1_boom_traj_ = InterpolateSegmentWithTangents(
             b0, b1, vb0, vb1, seg0_p1_boom_time_sec_, 1.0 / publish_rate_hz_);
       }
-      // arm 在 Phase1 保持不变（用户规格）：boom 抬升阶段斗杆不动，待 swing 到位
-      // 后于 Phase2 再外伸到段终点。既避免 boom(高压举升)+arm 同帧饱和抢泵流量，
-      // 又符合"先抬升跨越、到位再外伸入厢"的卸载动作顺序。
+      // arm 在 Phase1 的处置（规格更新：不再全程冻结）：boom 到位（带连续帧确认）后，
+      // 经 IsArmDeploySafe() 路径级预检放行，则以 seg0_arm_deploy_dps_ 限速追赶 WP4.arm，
+      // 消除 arm 空窗期；预检不通过（外伸途中会跌破门控、且齿尖已进入厢帮方位）时保持
+      // 冻结在起点角，仍由 Phase2 首帧一次打到 WP4.arm（原行为）。
+      // 触发时机与 boom 举升错开的理由：boom(高压举升)+arm 同帧饱和会抢泵流量。
       // swing 阶跃到"卡车附近"（段终点 swing 沿回转方向偏移固定角度）：
       // Phase1 期间 swing 阀口饱和快速回转，到达偏移目标后检查高度门控，
       // 通过则 Phase2 PCHIP 平滑收尾到段终点 swing（决策 1：固定偏移角）。
@@ -1086,16 +1200,24 @@ void DumpTrajectoryNode::PlanCurrentSegment() {
       // bucket 不在此预算理论值：Phase1 每帧按实测 boom/arm 反馈角实时计算参考 bucket 角
       // 以维持姿态（见 TimerCallback）。seg0_phase1_cmd_.bucket 先继承起点角，作为
       // 姿态未超目标时的保持基准。
-      // Phase1 独立超时：取 boom 全程与 swing 阶跃的预期耗时较大者 × 超时倍率
+      // Phase1 独立超时：boom 全程与 swing 阶跃并行 → 取较大者；arm deploy 在 boom 到位
+      // 后才启动，属串行追加 → 用加法而非 max（否则预算不足，会在 arm 追赶途中误判超时、
+      // 把未走完的 arm 甩给 Phase2 阶跃，重新引入指令跳变）。
       const double swing_step_deg =
           std::abs(Rad2Deg(seg0_phase1_cmd_.swing - seg_start.swing));
+      const double arm_deploy_sec =
+          seg0_arm_deploy_enable_
+              ? std::abs(Rad2Deg(seg_end.arm - seg_start.arm)) /
+                    std::max(seg0_arm_deploy_dps_, 1e-6)
+              : 0.0;
       seg0_phase1_timeout_sec_ = std::max(
           kMinSegmentTime,
-          std::max(
-              std::abs(boom_rise_deg) /
-                  std::max(waypoint_params_.seg0_boom_vel_dps, 1e-6),
-              swing_step_deg /
-                  std::max(seg0_phase1_swing_dps_, 1e-6)) *
+          (std::max(
+               std::abs(boom_rise_deg) /
+                   std::max(waypoint_params_.seg0_boom_vel_dps, 1e-6),
+               swing_step_deg /
+                   std::max(seg0_phase1_swing_dps_, 1e-6)) +
+           arm_deploy_sec) *
               segment_timeout_factor_);
     }
     // 段时间取 boom 和 swing 主导关节的较大值
@@ -1157,7 +1279,7 @@ void DumpTrajectoryNode::PlanCurrentSegment() {
   if (current_seg_idx_ == 0 && seg0_two_phase) {
     ROS_INFO("[dump_traj] segment 0 planned (two-phase): boom step %.1f->%.1f deg "
              "(cof=%.2f, swing-decoupled; Phase1 PCHIP %.1f->%.1f in parallel, %.2fs), "
-             "arm held %.1f deg, "
+             "arm %s %.1f -> %.1f deg @%.1f deg/s, "
              "swing step %.1f->%.1f deg (offset=%.1f), threshold=%.1f deg, "
              "phase1_timeout=%.2fs, time=%.2fs",
              Rad2Deg(seg_start.boom),
@@ -1166,7 +1288,10 @@ void DumpTrajectoryNode::PlanCurrentSegment() {
              Rad2Deg(seg0_p1_boom_mid_rad_),
              Rad2Deg(seg_end.boom),
              seg0_p1_boom_time_sec_,
+             seg0_arm_deploy_enable_ ? "deploy" : "hold",
              Rad2Deg(seg0_phase1_cmd_.arm),
+             Rad2Deg(seg_end.arm),
+             seg0_arm_deploy_dps_,
              Rad2Deg(seg_start.swing),
              Rad2Deg(seg0_phase1_cmd_.swing),
              seg0_swing_offset_deg_,
@@ -1197,13 +1322,21 @@ DumpTrajectoryNode::SegResult DumpTrajectoryNode::CheckSegmentProgress() {
     // 立即转入 boost 重试（防刮帮）。宽限期内（Phase2 刚启动）不判：此时 boom 正从中间角
     // PCHIP 抬升、齿尖偏低是设计预期，判定会立刻误掐断抬升（深卷位姿下必然低于阈值）。
     const double p2_age_sec = (ros::Time::now() - seg0_phase2_start_time_).toSec();
+    // 宽限期取自适应值（Phase1->Phase2 切换时按 deploy 是否走完算出）：deploy 已走完 →
+    // Phase2 内 arm 恒平（且打出本身已抬升齿尖），用配置值；未放行 → 预检已判定沿 arm
+    // 路径存在低于门控的下探（低 boom / 未锁姿态工况），而 Phase2 首帧阶跃打出 arm 会重现
+    // 它，宽限期须覆盖整段，否则途中破门控触发 boost 反向内收 arm、与外伸指令对抗。
+    // Seg0 退化（非两阶段）时 grace_eff 未赋值(=0)，回落配置值保持原行为。
+    const double p2_grace_sec = (seg0_phase2_grace_eff_sec_ > 0.0)
+                                    ? seg0_phase2_grace_eff_sec_
+                                    : seg0_phase2_gate_grace_sec_;
     if (current_seg_idx_ == 0 && seg0_height_gate_ && !IsBucketAboveTruck() &&
-        p2_age_sec > seg0_phase2_gate_grace_sec_) {
+        p2_age_sec > p2_grace_sec) {
       ROS_WARN("[dump_traj] flythrough seg0 bucket dropped below truck top "
                "(height=%.2fm <= %.2fm, phase2 age %.1fs > grace %.1fs), "
                "entering height gate for boost-retry",
                bucket_height_, TruckTopHeight() + bucket_clear_margin_m_,
-               p2_age_sec, seg0_phase2_gate_grace_sec_);
+               p2_age_sec, p2_grace_sec);
       return SegResult::kEnterGate;
     }
     // 段超时兜底（含 Seg1 的 swing 收敛等待期）：超时强制推进，防卡死
@@ -1348,6 +1481,105 @@ bool DumpTrajectoryNode::IsBucketAboveTruck() const {
     return false;
   }
   return bucket_height_ > (TruckTopHeight() + bucket_clear_margin_m_);
+}
+
+bool DumpTrajectoryNode::IsArmDeploySafe(double& z_min_path,
+                                        double& r_max_path) const {
+  z_min_path = 1e9;
+  r_max_path = -1e9;
+  // 数据未就绪 → 不放行（保守）：arm 继续冻结在起点角，等下一帧重试
+  if (!bucket_pos_valid_ || !truck_pose_valid_) {
+    ROS_WARN_THROTTLE(2.0, "[dump_traj] arm deploy check waiting for FK/truck "
+                           "pose, withheld");
+    return false;
+  }
+  if (waypoints_.size() < 2) return false;
+
+  // 路径：arm 从 Phase1 当前指令角 → WP4.arm；boom 取实测值（与门控同源，且实测
+  // 滞后于指令 → 预测高度偏低，属保守方向）。
+  const double arm_from_deg = Rad2Deg(seg0_phase1_cmd_.arm);
+  const double arm_to_deg = Rad2Deg(waypoints_[1].arm);
+  const int samples = std::max(2, seg0_arm_deploy_path_samples_);
+
+  // bucket 必须【复刻 Phase1 的逐帧单向姿态保持】而不能固定为实测值（见 TimerCallback）：
+  //   bucket_ref = clamp(attitude_target − boom − arm)，仅当 boom+arm+bucket_ref ≥ target
+  //   时生效（单向，不反向张斗）。
+  // 这一点直接决定结论的正负号：姿态锁定 A=−180° 后 Lt·sin(A)=0，斗齿对高度零贡献，
+  //   z = Lb·sin(boom) + La·sin(boom+arm)，dz/darm = La·cos(boom+arm)，
+  //   变号点在 arm = −90° − boom（boom=40.5° → −130.5°）→ 常规工况打出 arm 是【抬升】
+  //   齿尖（+1.8m 量级），可主动弥补跨越厢帮的高度余量；若误按 bucket 恒定采样，会
+  //   得到完全相反的“先降后升、谷底在 arm≈−85°、会跌破门控”结论（终点差达 2.0m），
+  //   把有效的抬升动作误拦死。
+  const double att_target_rad = Deg2Rad(bucket_attitude_target_deg_);
+  const double bkt_lo_rad = Deg2Rad(waypoint_params_.bucket_limit_lower_deg);
+  const double bkt_hi_rad = Deg2Rad(waypoint_params_.bucket_limit_upper_deg);
+
+  kinematics::JointState q = current_joint_;
+  double bucket_ref_rad = current_joint_.bucket;  // 姿态保持的“上一帧参考角”
+  double z_start = 0.0;
+  double z_end = 0.0;
+  int z_argmin_idx = 0;
+  for (int i = 0; i < samples; ++i) {
+    const double t = static_cast<double>(i) / static_cast<double>(samples - 1);
+    q.arm = Deg2Rad(arm_from_deg + t * (arm_to_deg - arm_from_deg));
+    // 单向姿态保持：与 TimerCallback 同一判据、同一限位裁剪
+    if (q.boom + q.arm + bucket_ref_rad >= att_target_rad) {
+      bucket_ref_rad = std::clamp(att_target_rad - q.boom - q.arm,
+                                  bkt_lo_rad, bkt_hi_rad);
+    }
+    q.bucket = bucket_ref_rad;
+    const auto pose = solver_->swing_center_forward(q);
+    if (i == 0) z_start = pose.z;
+    if (i == samples - 1) z_end = pose.z;
+    if (pose.z < z_min_path) {
+      z_min_path = pose.z;
+      z_argmin_idx = i;
+    }
+    r_max_path = std::max(r_max_path, std::hypot(pose.x, pose.y));
+  }
+  // 谷底位置：0 = 单调抬升（打出全程抬高齿尖）、samples-1 = 单调下降、中间 = 存在下探谷
+  const bool z_monotonic_rise = (z_argmin_idx == 0);
+
+  const double gate_thr = TruckTopHeight() + bucket_clear_margin_m_;
+  const bool height_ok = z_min_path > gate_thr;
+
+  // 半径豁免：外扩厢帮近边 = 回转中心→厢中心距离 − 厢体径向半宽 − (斗半宽+间隙)。
+  // 厢体径向半宽保守取 min(L,W)/2：厢长轴垂直连线时径向尺寸=W（min 正好）；
+  // 长轴平行连线时径向尺寸=L，min 会低估豁免范围（偏安全）。
+  bool radius_ok = false;
+  double near_edge = 0.0;
+  if (seg0_arm_deploy_radius_exempt_) {
+    const double d = std::hypot(truck_pose_.center_x, truck_pose_.center_y);
+    const double half_radial =
+        0.5 * std::min(waypoint_params_.truck_box_length,
+                       waypoint_params_.truck_box_width);
+    const double outset = 0.5 * waypoint_params_.bucket_width +
+                          waypoint_params_.bucket_wall_clearance;
+    near_edge = d - half_radial - outset;
+    radius_ok = (r_max_path < near_edge);
+  }
+
+  // 日志：放行时打一次 INFO（紧接着就会触发 deploy）； withheld 时每帧会被
+  // 重复调用，必须节流防刷屏
+  if (height_ok || radius_ok) {
+    ROS_INFO("[dump_traj] arm deploy path check ALLOW: arm %.2f->%.2f deg "
+             "(%d samples, attitude-hold model), z %.3f -> min %.3f -> end %.3f m "
+             "[%s, gain %+.3f] vs gate %.3f ? %s | r_max=%.3fm < near_edge "
+             "%.3fm ? %s",
+             arm_from_deg, arm_to_deg, samples, z_start, z_min_path, z_end,
+             z_monotonic_rise ? "monotonic rise" : "has dip", z_end - z_start,
+             gate_thr, height_ok ? "yes" : "no", r_max_path, near_edge,
+             radius_ok ? "yes" : "no");
+  } else {
+    ROS_WARN_THROTTLE(2.0,
+                      "[dump_traj] arm deploy WITHHELD: path z_min=%.3fm <= gate "
+                      "%.3fm AND r_max=%.3fm >= near_edge %.3fm (arm %.2f->%.2f "
+                      "deg, z %.3f->%.3f %s); waiting boom higher or radius shrink",
+                      z_min_path, gate_thr, r_max_path, near_edge, arm_from_deg,
+                      arm_to_deg, z_start, z_end,
+                      z_monotonic_rise ? "rise" : "dip");
+  }
+  return height_ok || radius_ok;
 }
 
 bool DumpTrajectoryNode::StartGateBoost() {
