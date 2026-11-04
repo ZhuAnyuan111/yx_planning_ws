@@ -257,6 +257,20 @@ class DumpTrajectoryNode {
   double seg0_boom_soon_deg_ = 8.0;            // 「boom 即将到位」阈值(deg)，仅 on_boom_arrived=false 时生效
   bool seg0_arm_deploy_radius_exempt_ = true;  // 半径豁免：外伸路径最大齿尖半径 < 外扩厢帮近边时，不要求高度过门控
 
+  // ---- 铲斗条件开斗（bucket conditional open）----
+  // 目的：门控通过后（Seg1 起），一旦 swing 对正卡车中心（误差 < 阈值），即刻限速开斗；
+  //       若 swing 偏离出阈值范围，立即冻结 bucket 保持当前位置（防洒料）；
+  //       回到范围内自动恢复。相比等到 Seg2 才开斗，大幅提前卸料时机。
+  bool bucket_open_enable_ = true;             // 总开关
+  double bucket_open_swing_thr_deg_ = 8.0;     // swing 对正阈值(deg)：|swing − truck_center_swing| ≤ thr 时允许开斗
+  double bucket_open_dps_ = 25.0;              // 开斗限速(deg/s)：总行程 ~109°，约 4.4s 开完
+
+  // ---- 铲斗条件开斗状态 ----
+  bool bucket_open_active_ = false;            // 已触发开斗（含暂停中）
+  bool bucket_open_done_ = false;              // bucket 已到达目标角
+  bool bucket_open_paused_ = false;              // 当前因 swing 偏离而暂停
+  double bucket_open_cmd_rad_ = 0.0;           // 当前 bucket 指令角(rad)，暂停时冻结
+
   // ---- 状态机 ----
   DumpPhase phase_ = DumpPhase::kIdle;
 

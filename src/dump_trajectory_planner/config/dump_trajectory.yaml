@@ -206,6 +206,16 @@ online_plan:
   #      （原 waypoint/attitude_angle_deg 已并入此处，不再单独配置）。
   bucket_attitude_target_deg: -180.0
 
+  # ---- 铲斗条件开斗（bucket conditional open）----
+  # Seg1 起监视 swing 对正误差，一旦 |swing − truck_center_swing| ≤ thr 就开始限速开斗；
+  # swing 偏离超出 thr → 立即冻结 bucket 保持当前位置（防洒料）；回到范围内自动恢复。
+  # 效果：相比等到 Seg2 才开斗，卸料时机大幅提前（与 swing 到位同步开始）。
+  bucket_open_enable: true
+  # swing 对正阈值(deg)：厢宽 2.6m、回转半径 ~8m → 8° ≈ 1.1m 横向偏移，在厢体范围内
+  bucket_open_swing_thr_deg: 10.0
+  # 开斗限速(deg/s)：总行程 ~109°（-119° → -10°），25 deg/s 约 4.4s 开完
+  bucket_open_dps: 25.0
+
   # ---- 动态卸载点选取 ----
   # 是否启用动态卸载点选取：true 且收到远点（/truck_center_unloadpoint_2）时，
   # 在近点与远点之间生成候选点，按斗数选取；否则回退单点模式（近点即卸载点）

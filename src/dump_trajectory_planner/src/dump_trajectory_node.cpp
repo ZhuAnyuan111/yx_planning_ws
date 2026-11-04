@@ -184,6 +184,14 @@ void DumpTrajectoryNode::LoadParams() {
   seg0_arm_deploy_radius_exempt_ =
       pnh_.param("online_plan/seg0_arm_deploy_radius_exempt", true);
 
+  // ---- 铲斗条件开斗（bucket conditional open）----
+  bucket_open_enable_ =
+      pnh_.param("online_plan/bucket_open_enable", true);
+  bucket_open_swing_thr_deg_ =
+      pnh_.param("online_plan/bucket_open_swing_thr_deg", 8.0);
+  bucket_open_dps_ =
+      pnh_.param("online_plan/bucket_open_dps", 25.0);
+
   // ---- 动态卸载点选取 ----
   unload_selector_enable_ =
       pnh_.param("online_plan/unload_selector_enable", true);
@@ -882,11 +890,14 @@ void DumpTrajectoryNode::TimerCallback(const ros::TimerEvent& /*event*/) {
           seg0_phase2_start_time_ = ros::Time::now();
           const auto p2_t0 = std::chrono::steady_clock::now();
           const kinematics::JointState& wp4 = waypoints_[1];
-          // Phase2 起点：全关节取实测值（swing 不再取 Phase1 指令值续接）：跳转条件改为
-          // boom 到位后 swing 可能尚未收敛，若 PCHIP 仍从指令值起算会跑在实测前面播完，
-          // swing 带大滞后进入卸载（错误方位卸料）；改实测起点且 p2_time 含剩余 swing
-          // 行程，让指令等实测收敛；速度取实测保证斜率匹配。
-          kinematics::JointState phase2_start = current_joint_;
+          // Phase2 起点：取 Phase1 末帧指令值（非实测），保证位置环指令连续。
+          // 纯位置环控制下，若从实测起规划会使指令回跳到滞后位置 → 误差瞬间归零 →
+          // 阀芯回中 → 执行器减速/停顿 → "跟踪速度突降"。从指令接续则：
+          //   1) 指令信号无跳变，位置环误差保持，执行器维持运动；
+          //   2) PCHIP 行程缩短（指令领先实测），播完后指令保持在目标位，
+          //      实测自然收敛；段完成仍靠实测+容差+连续帧确认，不会提前跳段。
+          // v_start 仍取实测速度：匹配物理动量，保证 PCHIP 斜率与执行器当前速率一致。
+          kinematics::JointState phase2_start = seg0_phase1_cmd_;
           double sw_diff = NormalizeRadToPi(phase2_start.swing - wp4.swing);
           phase2_start.swing = wp4.swing + sw_diff;
           // arm 收尾：Phase2 的 PCHIP 起点 arm 直接取 WP4.arm，故 arm 在 Phase2 内恒平。
@@ -904,7 +915,8 @@ void DumpTrajectoryNode::TimerCallback(const ros::TimerEvent& /*event*/) {
               p2_swing_diff / waypoint_params_.swing_vel_dps,
               p2_arm_diff / waypoint_params_.seg0_arm_vel_dps});
           p2_time = std::max(p2_time, kMinSegmentTime);
-          // Phase2 起点切线取当前实测速度（防阀反向冲击）
+          // Phase2 起点切线取实测速度：匹配物理动量（指令连续但执行器有惯性，
+          // 斜率与当前速率一致可避免 PCHIP 首帧过缓导致实测追上指令后误差变号）
           kinematics::JointState v_start = vel_estimator_.Estimate();
           v_start.arm = 0.0;  // arm 已阶跃到 WP4 并保持，起点速度置 0
           // Phase2 终点切线 = WP4 标称切线（条件飞越）：门控满足时不在 WP4 停稳，而以
@@ -980,7 +992,14 @@ void DumpTrajectoryNode::TimerCallback(const ros::TimerEvent& /*event*/) {
         if (phase_ == DumpPhase::kPlanNextSegment) {
           PlanCurrentSegment();
           if (phase_ == DumpPhase::kExecutingSegment && !seg_trajectory_.empty()) {
-            PublishTrajectoryFrame(seg_trajectory_[0], true);
+            // 飞越首帧也须应用 bucket 条件开斗覆盖（跨段不清零）
+            kinematics::JointState first_frame = seg_trajectory_[0];
+            if (bucket_open_active_ || bucket_open_done_) {
+              first_frame.bucket = bucket_open_done_
+                                       ? waypoints_.back().bucket
+                                       : bucket_open_cmd_rad_;
+            }
+            PublishTrajectoryFrame(first_frame, true);
             seg_frame_idx_ = 1;
           }
         }
@@ -995,12 +1014,75 @@ void DumpTrajectoryNode::TimerCallback(const ros::TimerEvent& /*event*/) {
         return;
       }
       // kContinue：逐帧发布
+      kinematics::JointState frame;
       if (seg_frame_idx_ < seg_trajectory_.size()) {
-        PublishTrajectoryFrame(seg_trajectory_[seg_frame_idx_], true);
+        frame = seg_trajectory_[seg_frame_idx_];
         ++seg_frame_idx_;
       } else {
-        PublishTrajectoryFrame(seg_trajectory_.back(), true);
+        frame = seg_trajectory_.back();
       }
+
+      // ---- 铲斗条件开斗覆盖（Seg1+）----
+      // 门控通过后开始监视：swing 对正卡车中心 → 限速开斗；偏离 → 冻结保持。
+      if (bucket_open_enable_ && current_seg_idx_ >= 1 &&
+          !bucket_open_done_ && waypoints_.size() >= 2) {
+        const double truck_swing_deg = Rad2Deg(waypoints_.back().swing);
+        const double cur_swing_deg = Rad2Deg(current_joint_.swing);
+        const double sw_err =
+            ShortestAngularDistanceDeg(cur_swing_deg, truck_swing_deg);
+
+        if (!bucket_open_active_ && sw_err <= bucket_open_swing_thr_deg_) {
+          // 首次触发：从当前 PCHIP 桢的 bucket 开始
+          bucket_open_active_ = true;
+          bucket_open_cmd_rad_ = frame.bucket;
+          ROS_INFO("[dump_traj] bucket open START: swing_err=%.2f deg <= thr "
+                   "%.2f, bucket %.2f -> target %.2f deg @%.1f deg/s",
+                   sw_err, bucket_open_swing_thr_deg_,
+                   Rad2Deg(bucket_open_cmd_rad_),
+                   Rad2Deg(waypoints_.back().bucket), bucket_open_dps_);
+        }
+
+        if (bucket_open_active_) {
+          if (sw_err > bucket_open_swing_thr_deg_) {
+            // swing 偏离：暂停开斗，冻结 bucket 指令在当前位置
+            if (!bucket_open_paused_) {
+              bucket_open_paused_ = true;
+              ROS_WARN("[dump_traj] bucket open PAUSED: swing_err=%.2f deg > "
+                       "thr %.2f, bucket held at %.2f deg",
+                       sw_err, bucket_open_swing_thr_deg_,
+                       Rad2Deg(bucket_open_cmd_rad_));
+            }
+            // bucket_open_cmd_rad_ 不变（冻结）
+          } else {
+            // swing 对正：继续/恢复开斗
+            if (bucket_open_paused_) {
+              bucket_open_paused_ = false;
+              ROS_INFO("[dump_traj] bucket open RESUMED: swing_err=%.2f deg, "
+                       "bucket at %.2f deg",
+                       sw_err, Rad2Deg(bucket_open_cmd_rad_));
+            }
+            const double target_rad = waypoints_.back().bucket;
+            const double remain = target_rad - bucket_open_cmd_rad_;
+            const double step =
+                Deg2Rad(bucket_open_dps_) / publish_rate_hz_;
+            if (std::abs(remain) <= step) {
+              bucket_open_cmd_rad_ = target_rad;
+              bucket_open_done_ = true;
+              ROS_INFO("[dump_traj] bucket open DONE: bucket=%.2f deg "
+                       "(target reached, seg_idx=%d)",
+                       Rad2Deg(target_rad), current_seg_idx_);
+            } else {
+              bucket_open_cmd_rad_ += std::copysign(step, remain);
+            }
+          }
+          frame.bucket = bucket_open_cmd_rad_;  // 覆盖 PCHIP bucket
+        }
+      } else if (bucket_open_done_) {
+        // 已完成：保持目标角（不让 PCHIP 拉回）
+        frame.bucket = waypoints_.back().bucket;
+      }
+
+      PublishTrajectoryFrame(frame, true);
       break;
     }
 
@@ -1155,6 +1237,12 @@ void DumpTrajectoryNode::PlanCurrentSegment() {
     seg0_arm_deploy_done_ = false;
     seg0_boom_arrived_count_ = 0;
     seg0_phase2_grace_eff_sec_ = 0.0;
+    // 铲斗条件开斗状态复位：每轮卸载都必须清零，否则第二轮带着上一轮的 done=true
+    // 直接跳过开斗。放在 seg_idx==0 内保证跨段（Seg1→Seg2）不清零。
+    bucket_open_active_ = false;
+    bucket_open_done_ = false;
+    bucket_open_paused_ = false;
+    bucket_open_cmd_rad_ = 0.0;
     if (seg0_two_phase) {
       seg0_phase1_cmd_ = seg_start;  // arm/bucket/swing/boom 先继承起点
       // boom 阶跃到"中间角"（与 swing 进度解耦，替代旧"随 swing 进度连续插值抬升"）：
