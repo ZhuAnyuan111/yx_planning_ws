@@ -16,4 +16,6 @@
   <depend>std_msgs</depend>
   <depend>visualization_msgs</depend>
   <depend>kinematics</depend>
+
+  <test_depend>rostest</test_depend>
 </package>

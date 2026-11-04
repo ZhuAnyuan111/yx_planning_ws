@@ -53,8 +53,7 @@ struct WaypointParams {
   // WP4 IK 求解的铲斗关节角（deg），用于 swing_center_inverse_by_bucket_angle
   double wp4_bucket_angle_deg = 25.0;
 
-  // WP5 混合系数（p5_boom_cof 已停用：WP5.boom 恒取 WP4.boom，Seg1 boom 保持）
-  double p5_boom_cof = 0.5;
+  // WP5 arm 混合系数（WP5.boom 恒取 WP4.boom，Seg1 boom 保持不下降）
   double p5_arm_cof = 0.5;
 
   // 各段主导关节速度（deg/s）——命名按"段+关节"语义（旧 wp2/wp4/wp5_ 编号已废弃）：

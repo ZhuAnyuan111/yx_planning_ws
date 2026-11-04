@@ -49,6 +49,29 @@ target_link_libraries(dump_trajectory_node
   ${catkin_LIBRARIES}
 )
 
+# ========== 离线单元测试（纯 C++，不依赖 ROS 运行时）==========
+if(CATKIN_ENABLE_TESTING)
+  catkin_add_gtest(test_angle_utils
+    test/test_angle_utils.cpp
+  )
+  target_link_libraries(test_angle_utils ${PROJECT_NAME}_lib ${catkin_LIBRARIES} gtest_main)
+
+  catkin_add_gtest(test_cubic_hermite_interpolator
+    test/test_cubic_hermite_interpolator.cpp
+  )
+  target_link_libraries(test_cubic_hermite_interpolator ${PROJECT_NAME}_lib ${catkin_LIBRARIES} gtest_main)
+
+  catkin_add_gtest(test_velocity_estimator
+    test/test_velocity_estimator.cpp
+  )
+  target_link_libraries(test_velocity_estimator ${PROJECT_NAME}_lib ${catkin_LIBRARIES} gtest_main)
+
+  catkin_add_gtest(test_waypoint_generator
+    test/test_waypoint_generator.cpp
+  )
+  target_link_libraries(test_waypoint_generator ${PROJECT_NAME}_lib ${catkin_LIBRARIES} gtest_main)
+endif()
+
 # ========== 安装 ==========
 install(TARGETS ${PROJECT_NAME}_lib dump_trajectory_node
   ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}

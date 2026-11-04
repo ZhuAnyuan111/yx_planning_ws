@@ -57,11 +57,11 @@ DumpTrajectoryNode::DumpTrajectoryNode(ros::NodeHandle& nh,
   reporter_.ReportUnloadPlanFinish(0.0f);
 
   ROS_INFO("[dump_traj] ready (4-WP online-plan mode). publish_rate=%.1fHz, "
-           "total_timeout=%.1fs, seg_tols=[%.1f/%.1f,%.1f,%.1f/%.1f]deg",
+           "total_timeout=%.1fs, seg_tols=[%.1f/%.1f,%.1f,%.1f]deg",
            publish_rate_hz_, total_timeout_sec_,
            seg0_swing_tolerance_deg_, seg0_boom_tolerance_deg_,
            seg1_swing_tolerance_deg_,
-           seg2_arm_tolerance_deg_, seg2_bucket_tolerance_deg_);
+           seg2_bucket_tolerance_deg_);
 }
 
 // ==================== 初始化 ====================
@@ -91,8 +91,6 @@ void DumpTrajectoryNode::LoadParams() {
       pnh_.param("waypoint/truck_height_offset", 0.5);
   waypoint_params_.wp4_bucket_angle_deg =
       pnh_.param("waypoint/wp4_bucket_angle_deg", 25.0);
-  waypoint_params_.p5_boom_cof =
-      pnh_.param("waypoint/p5_boom_cof", 0.5);
   waypoint_params_.p5_arm_cof =
       pnh_.param("waypoint/p5_arm_cof", 0.5);
   waypoint_params_.seg0_boom_vel_dps =
@@ -137,7 +135,6 @@ void DumpTrajectoryNode::LoadParams() {
   seg0_phase2_gate_grace_sec_ =
       pnh_.param("online_plan/seg0_phase2_gate_grace_sec", 2.0);
   seg1_swing_tolerance_deg_ = pnh_.param("online_plan/seg1_swing_deg", 5.0);
-  seg2_arm_tolerance_deg_ = pnh_.param("online_plan/seg2_arm_deg", 10.0);
   seg2_bucket_tolerance_deg_ = pnh_.param("online_plan/seg2_bucket_deg", 20.0);
   segment_timeout_factor_ = pnh_.param("online_plan/segment_timeout_factor", 2.0);
   segment_confirm_frames_ = pnh_.param("online_plan/segment_confirm_frames", 3);

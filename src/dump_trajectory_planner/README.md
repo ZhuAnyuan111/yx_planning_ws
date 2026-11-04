@@ -87,7 +87,7 @@
 |:---:|:---|:---|:---|
 | WP1 | 起点 | 挖掘终止时的关节角 | 直接取实时关节角，铲斗按姿态角上限修正 |
 | WP4 | 厢上过渡点 | 到达卸载点上方 | `xy = ComputeMiddleUpXY()`（回转圆与厢矩形交点策略），铰接点高度 `z = truck_top_height + wp4_height_bias`，IK 求解 |
-| WP5 | 卸载过渡点 | `swing/boom/arm` 到位 | `swing5 = unload_swing`；`boom5/arm5` 按 `p5_boom_cof/p5_arm_cof` 混合到卸载点 |
+| WP5 | 卸载过渡点 | `swing/boom/arm` 到位 | `swing5 = unload_swing`；`boom5 = boom4`（保持不下降）；`arm5` 按 `p5_arm_cof` 混合到卸载点 |
 | WP6 | 终点 | 铲斗翻转卸料 | `= unload_joint`（IK 解算结果） |
 
 **3 段规划**：
@@ -96,7 +96,7 @@
 |---|---|---|---|
 | **Seg0** | WP1→WP4 | 两阶段策略（见下） | swing 5° / boom 5° + 高度门控 |
 | **Seg1** | WP4→WP5 | swing 回转 | swing 5° |
-| **Seg2** | WP5→WP6 | arm+bucket 卸载 | arm 10° / bucket 20° |
+| **Seg2** | WP5→WP6 | arm+bucket 卸载 | bucket 单向判据（实际≥规划即完成） |
 
 段时间由主导关节速度决定（`max(|Δjoint|/vel_dps)`）。
 
@@ -122,7 +122,7 @@
 
 **WP3 卸载过渡点 / swing 到位点**
 - swing = 卸载方位（相对 WP2 展开）→ 回转已到位；
-- boom/arm = `p5_boom_cof/p5_arm_cof(0.5)·WP2 + (1−cof)·unload` 中点混合；
+- boom = WP2.boom（保持不下降）；arm = `p5_arm_cof(0.5)·WP2.arm + (1−cof)·unload.arm` 中点混合；
 - bucket = 姿态修正（基于 WP2 bucket），且 `bk3 = max(bk3, bk2)` **防铲斗倒退/张斗**；
 - 切线 = Catmull-Rom 内部点（非 0，平滑通过）；
 - Seg1 时长 = `max(|Δswing|/swing_vel_dps, |Δboom|/unload_boom_vel_dps, |Δarm|/unload_arm_vel_dps)`。
@@ -360,8 +360,8 @@ dump_trajectory_planner/
 |:---|:---|:---|
 | `kinematics/*` | `boom_length/arm_length/bucket_tooth_length` + 销轴偏置 + 6 项关节限位 | 由 `KinematicsSolver` 加载 |
 | `feasibility/*` | `enable_envelope_prefilter`、`reach_min/max`、`dump_height_min/max`、`bucket_attitude_deg` | 包络粗筛 + IK 判定 |
-| `waypoint/*` | `wp4_height_bias`、`truck_height_offset`、`wp4_bucket_angle_deg`、`p5_boom/arm_cof`、`bucket_limit_*_deg`、段速度（`seg0_boom_vel_dps`/`swing_vel_dps`/`seg0_arm_vel_dps`/`unload_boom_vel_dps`/`unload_arm_vel_dps`/`unload_bucket_vel_dps`）、`truck_box_length/width`、`wp4_R_coff`、**`bucket_width`、`bucket_wall_clearance`**（铲斗宽碰撞外扩） | 航路点生成（姿态角目标已并入 `online_plan/bucket_attitude_target_deg`）|
-| `online_plan/*` | `seg0_swing_deg/boom_deg`、`seg1_swing_deg`、`seg2_arm_deg/bucket_deg`、`seg0_confirm_frames`、`segment_confirm_frames`、`segment_timeout_factor`、`bucket_clear_margin_m`、`bucket_clear_seg_idx`、`gate_timeout_sec`、`gate_boost_boom_deg`、`gate_boost_tolerance_deg`、`gate_max_boost_count`、`waypoint_clamp_abort_deg`、**`seg0_switch_threshold_deg`、`seg0_phase1_swing_dps`、`seg0_min_step_factor`、`seg0_swing_offset_deg`、`seg0_boom_pchip_start_cof`、`bucket_attitude_target_deg`**、**`seg0_phase2_gate_grace_sec`、`seg0_arm_deploy_enable`、`seg0_arm_deploy_dps`、`seg0_arm_deploy_path_samples`、`seg0_arm_deploy_on_boom_arrived`、`seg0_boom_soon_deg`、`seg0_arm_deploy_radius_exempt`**（斗杆条件打出）、**`unload_selector_enable`、`unload_candidates_count`、`unload_bucket_far_count/mid_count/near_count`** | 在线规划、Seg0 两阶段与动态卸载点选取 |
+| `waypoint/*` | `wp4_height_bias`、`truck_height_offset`、`wp4_bucket_angle_deg`、`p5_arm_cof`、`bucket_limit_*_deg`、段速度（`seg0_boom_vel_dps`/`swing_vel_dps`/`seg0_arm_vel_dps`/`unload_boom_vel_dps`/`unload_arm_vel_dps`/`unload_bucket_vel_dps`）、`truck_box_length/width`、`wp4_R_coff`、**`bucket_width`、`bucket_wall_clearance`**（铲斗宽碰撞外扩） | 航路点生成（姿态角目标已并入 `online_plan/bucket_attitude_target_deg`）|
+| `online_plan/*` | `seg0_swing_deg/boom_deg`、`seg1_swing_deg`、`seg2_bucket_deg`、`seg0_confirm_frames`、`segment_confirm_frames`、`segment_timeout_factor`、`bucket_clear_margin_m`、`bucket_clear_seg_idx`、`gate_timeout_sec`、`gate_boost_boom_deg`、`gate_boost_tolerance_deg`、`gate_max_boost_count`、`waypoint_clamp_abort_deg`、**`seg0_switch_threshold_deg`、`seg0_phase1_swing_dps`、`seg0_min_step_factor`、`seg0_swing_offset_deg`、`seg0_boom_pchip_start_cof`、`bucket_attitude_target_deg`**、**`seg0_phase2_gate_grace_sec`、`seg0_arm_deploy_enable`、`seg0_arm_deploy_dps`、`seg0_arm_deploy_path_samples`、`seg0_arm_deploy_on_boom_arrived`、`seg0_boom_soon_deg`、`seg0_arm_deploy_radius_exempt`**（斗杆条件打出）、**`unload_selector_enable`、`unload_candidates_count`、`unload_bucket_far_count/mid_count/near_count`** | 在线规划、Seg0 两阶段与动态卸载点选取 |
 | `visualization/*` | `enable`、`frame_id` | 可视化总开关与 marker 坐标系 |
 | 顶层 | `publish_rate`、`total_timeout_sec` | 全局 |
 

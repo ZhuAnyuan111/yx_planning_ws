@@ -222,7 +222,6 @@ class DumpTrajectoryNode {
   double seg0_phase2_gate_grace_sec_ = 2.0;     // Phase2 启动后宽限期(s)：期内每帧门控不判，允许 boom 先 PCHIP 抬升
   ros::Time seg0_phase2_start_time_;            // Phase2 启动时刻（宽限期计算基准）
   double seg1_swing_tolerance_deg_ = 5.0;       // WP4→WP5：swing 到位阈值（播完后条件飞越等待用）
-  double seg2_arm_tolerance_deg_ = 10.0;        // [已停用] WP5→WP6 完成不再检查斗杆(arm)
   double seg2_bucket_tolerance_deg_ = 20.0;     // WP5→WP6：铲斗单向判据(实际≥规划即完成)的日志归一化尺度
   double segment_timeout_factor_ = 2.0;    // 段超时倍率（段时间 × 该值）
   int segment_confirm_frames_ = 3;         // 段完成需连续确认帧数（防抖）

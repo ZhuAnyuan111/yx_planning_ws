@@ -418,10 +418,9 @@ DumpWaypointResult GenerateDumpWaypoints(
                                              bkt_lo, bkt_hi);
 
   // ---------- WP5: swing 到位，boom 保持(不下降)，arm 混合，bucket 姿态限制且不倒退 ----------
-  // Seg1 boom 保持（用户规格 2026-10-19）：WP5.boom 恒取 WP4.boom，不再按 p5_boom_cof
-  // 混合下降——Seg1 对准方位期间卷着料的铲斗悬在车厢/料堆上方，边转边降会把斗压向
-  // 料堆；boom 下放挪到 Seg2 与开斗同步执行。PCHIP 平坦段(Δ=0)切线自动归零
-  // (PchipClampScalar)，Seg1 boom 指令恒平，无需额外处理。
+  // Seg1 boom 保持：WP5.boom 恒取 WP4.boom，不做混合下降——Seg1 对准方位期间卷着料的铲斗
+  // 悬在车厢/料堆上方，边转边降会把斗压向料堆；boom 下放挢到 Seg2 与开斗同步执行。
+  // PCHIP 平坦段(Δ=0)切线自动归零(PchipClampScalar)，Seg1 boom 指令恒平，无需额外处理。
   const double sw5 = sw_unl_u;
   const double bo5 = bo4;
   const double ar5 = p.p5_arm_cof * ar4 + (1.0 - p.p5_arm_cof) * ar_unload;

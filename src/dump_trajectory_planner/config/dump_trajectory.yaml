@@ -45,8 +45,7 @@ waypoint:
   # WP4 IK 求解的铲斗关节角（deg），bucket_len=0 时不影响 swing/boom/arm
   wp4_bucket_angle_deg: 25.0
 
-  # WP5 混合系数（p5_boom_cof 已停用：WP5.boom 现恒取 WP4.boom，Seg1 boom 保持不下降）
-  p5_boom_cof: 0.5
+  # WP5 arm 混合系数（WP5.boom 恒取 WP4.boom，Seg1 boom 保持不下降）
   p5_arm_cof: 0.5
 
   # 段主导关节速度 (deg/s)——命名按"段+关节"语义（旧 wp2/wp4/wp5_ 编号已废弃）
@@ -117,7 +116,6 @@ online_plan:
   # 工况），Phase2 首帧阶跃打出 arm 会重现它，避免途中破门控触发 boost 反向内收 arm 对抗。
   seg0_phase2_gate_grace_sec: 2.0
   seg1_swing_deg: 5.0      # Seg1 完成判据：指令播完 且 |swing 误差| ≤ 该值（连续 segment_confirm_frames 帧确认）
-  seg2_arm_deg: 10.0       # [已停用] Seg2 完成不再检查斗杆(arm)
   seg2_bucket_deg: 20.0    # 仅作 Seg2 未达标时日志归一化尺度；完成触发=实际铲斗角≥规划角
 
   # 段完成需连续确认帧数（防液压振荡误判）
