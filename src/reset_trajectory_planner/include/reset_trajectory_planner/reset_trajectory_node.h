@@ -20,8 +20,10 @@
 ///   /Sys_SRe_FlagResetExcute  (std_msgs/Float64)         data==1 挖掘循环复位 /
 ///                             ==2 搭台复位 / ==0 退出
 ///
-/// 目标姿态由上位机预计算后经对应模式话题直接给出（四关节角）：
-///   swing=x, boom=y, arm=z, bucket=w
+/// 目标姿态（部分关节由配置覆盖话题值）：
+///   swing / boom：取自当前模式话题（x=swing, y=boom）
+///   arm        ：固定为配置 arm_deploy_max_deg（外翻最大角），不取话题
+///   bucket     ：按姿态角保持逐帧解算 bucket = bucket_attitude_target_deg - boom - arm，不取话题
 ///
 /// 输出话题：
 ///   /RefDeviceTraj_Reset (geometry_msgs/Pose)
@@ -89,6 +91,7 @@ class ResetTrajectoryNode {
   // ==================== 工具方法 ====================
   void PublishTrajectoryFrame(double swing, double boom, double arm,
                               double bucket, bool running);
+  double ComputeBucketHold(double boom_deg, double arm_deg) const;  // 按姿态角解算并裁剪 bucket
   void StopExecution();                     // 外部撤销：停止并置结束位
   void AbortExecution(const char* reason);  // 异常中止：保持末指令并置结束位
   bool CheckInputsValid(bool goal_src_valid, const char* src_topic);  // 激活前置校验：数据是否曾到达
@@ -124,6 +127,12 @@ class ResetTrajectoryNode {
   double rs_threshold_5_ = 5.0;         // RSThreshold(5)：bucket_height_gd 结束阈值
   double input_timeout_sec_ = 1.0;      // 输入话题最大允许静默时长（秒）
   bool enable_debug_log_ = false;       // 调试日志开关（yaml 配置）
+
+  // ---- 复位目标姿态覆盖参数 ----
+  double arm_deploy_max_deg_ = -30.0;          // arm 外翻最大角（deg），替代话题 arm 目标
+  double bucket_attitude_target_deg_ = -90.0;  // bucket 姿态角目标（boom+arm+bucket，deg）
+  double bucket_limit_lower_deg_ = -135.0;     // bucket 指令下限（deg）
+  double bucket_limit_upper_deg_ = 30.0;       // bucket 指令上限（deg）
 
   // ---- 状态机 ----
   ResetPhase phase_ = ResetPhase::kIdle;

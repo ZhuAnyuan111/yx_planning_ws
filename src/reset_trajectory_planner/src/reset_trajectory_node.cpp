@@ -43,6 +43,12 @@ void ResetTrajectoryNode::LoadParams() {
   input_timeout_sec_ = pnh_.param("input_timeout_sec", 1.0);
   enable_debug_log_ = pnh_.param("enable_debug_log", false);
 
+  // 复位目标姿态覆盖参数（arm 固定外翻最大角、bucket 按姿态角保持）
+  arm_deploy_max_deg_ = pnh_.param("arm_deploy_max_deg", -30.0);
+  bucket_attitude_target_deg_ = pnh_.param("bucket_attitude_target_deg", -90.0);
+  bucket_limit_lower_deg_ = pnh_.param("bucket_limit_lower_deg", -135.0);
+  bucket_limit_upper_deg_ = pnh_.param("bucket_limit_upper_deg", 30.0);
+
   if (enable_debug_log_) {
     ROS_INFO("[reset_traj] debug log ENABLED");
   }
@@ -222,17 +228,17 @@ void ResetTrajectoryNode::ActivateCallback(
 
   // 按模式锁定目标快照：执行期间一律使用快照值，避免目标话题中途刷新
   // 导致回转指令跳变而进度基准（起始角/方向/总行程）仍为旧值
+  // swing / boom 取自话题；arm 固定为外翻最大角；bucket 按姿态角保持解算
   if (mode == ResetMode::kDigCycle) {
     exec_goal_swing_deg_ = gp_swing_deg_;
     exec_goal_boom_deg_ = gp_boom_deg_;
-    exec_goal_arm_deg_ = gp_arm_deg_;
-    exec_goal_bucket_deg_ = gp_bucket_deg_;
   } else {
     exec_goal_swing_deg_ = clean_swing_deg_;
     exec_goal_boom_deg_ = clean_boom_deg_;
-    exec_goal_arm_deg_ = clean_arm_deg_;
-    exec_goal_bucket_deg_ = clean_bucket_deg_;
   }
+  exec_goal_arm_deg_ = arm_deploy_max_deg_;
+  exec_goal_bucket_deg_ =
+      ComputeBucketHold(exec_goal_boom_deg_, exec_goal_arm_deg_);
 
   // 记录起始回转角，判断方向和总行程（使用方向性角度差处理 360° 回绕）
   swing_start_deg_ = swing_deg_;
@@ -273,6 +279,7 @@ void ResetTrajectoryNode::EnterSwingPhase() {
   // 锁定当前臂架角度作为阶段1保持目标（让控制器有明确纠偏信号）
   hold_boom_deg_ = boom_deg_;
   hold_arm_deg_ = arm_deg_;
+  // 阶段1 bucket 保持当前实测值（不做姿态解算）；阶段2 再切到姿态角保持
   hold_bucket_deg_ = bucket_deg_;
   PublishTrajectoryFrame(exec_goal_swing_deg_, hold_boom_deg_, hold_arm_deg_,
                          hold_bucket_deg_, true);
@@ -400,9 +407,8 @@ void ResetTrajectoryNode::ExecuteArmPhase() {
       arm_start_boom_deg_ + t * (exec_goal_boom_deg_ - arm_start_boom_deg_);
   const double arm_now =
       arm_start_arm_deg_ + t * (exec_goal_arm_deg_ - arm_start_arm_deg_);
-  const double bucket_now =
-      arm_start_bucket_deg_ +
-      t * (exec_goal_bucket_deg_ - arm_start_bucket_deg_);
+  // bucket 不做独立映射，按姿态角逐帧解算（随 boom/arm 联动维持固定姿态）
+  const double bucket_now = ComputeBucketHold(boom_now, arm_now);
 
   // 周期性进度打印（1Hz），便于排查"臂架为什么走这么慢/快"
   if (enable_debug_log_) {
@@ -418,6 +424,16 @@ void ResetTrajectoryNode::ExecuteArmPhase() {
 }
 
 // ==================== 工具方法 ====================
+
+/// 按姿态角保持解算 bucket：bucket = attitude_target - boom - arm，并裁剪到指令限位。
+/// 输入为本帧下发的 boom/arm 指令角，保证发布帧的姿态角恒为 attitude_target。
+double ResetTrajectoryNode::ComputeBucketHold(double boom_deg,
+                                              double arm_deg) const {
+  double bucket = bucket_attitude_target_deg_ - boom_deg - arm_deg;
+  bucket = std::max(bucket_limit_lower_deg_,
+                    std::min(bucket_limit_upper_deg_, bucket));
+  return bucket;
+}
 
 void ResetTrajectoryNode::PublishTrajectoryFrame(double swing, double boom,
                                                  double arm, double bucket,

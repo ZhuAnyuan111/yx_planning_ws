@@ -74,7 +74,7 @@ reset_trajectory_planner/
 
 | 项目 | 说明 |
 |------|------|
-| 发布内容 | swing = 目标终点角，boom/arm/bucket = **锁定值**（进入阶段瞬间的臂架角度，非实时值） |
+| 发布内容 | swing = 目标终点角，boom/arm/bucket = **锁定值**（进入阶段瞬间的臂架角度，非实时值；bucket 亦锁定为当前实测值，阶段2 才切姿态保持） |
 | 发布频率 | 10Hz |
 | 退出条件 | 方向性角度差 `traveled >= swing_threshold_deg`（默认 10°） |
 | 执行时长 | **自适应** — 取决于实际回转速度 |
@@ -91,7 +91,7 @@ reset_trajectory_planner/
 | 发布频率 | 10Hz |
 | 映射起点 | **阶段2触发瞬间**的实际关节角（消除阶段1漂移） |
 | 映射公式 | `t = (已回转 - threshold) / (总行程 - threshold)`，t∈[0, 1] |
-| 臂架计算 | `θ(t) = θ_start + t * (θ_goal - θ_start)` |
+| 臂架计算 | boom/arm：`θ(t) = θ_start + t * (θ_goal - θ_start)`；**bucket：按姿态角逐帧解算 `bucket_attitude_target_deg − boom(t) − arm(t)`，不做独立映射** |
 | 结束条件 | 物理提前结束 或 回转到位/超调 |
 | 超时保护 | 全局 `total_timeout_sec`（默认 30s）统一覆盖阶段1+阶段2 |
 | 执行时长 | **完全自适应** — 臂架完成时刻 ≈ 回转到位时刻 |
@@ -129,26 +129,29 @@ truck_center_swingAngle = rad2deg(atan2(y, x)) + 180
 
 ## 目标姿态输入
 
-目标姿态由上位机预计算后，按**工作模式**通过不同话题（均为 `geometry_msgs/Quaternion`）下发：
+复位目标姿态由**话题值 + 配置覆盖**共同决定：
+
+| 关节 | 目标来源 | 说明 |
+|------|----------|------|
+| `swing` | 模式话题 `.x` | 取自上位机预计算值 |
+| `boom` | 模式话题 `.y` | 取自上位机预计算值 |
+| `arm` | **配置 `arm_deploy_max_deg`** | 固定为外翻最大角，**不取话题** |
+| `bucket` | **姿态角保持解算** | `bucket = bucket_attitude_target_deg − boom − arm`，**不取话题** |
+
+模式话题（均为 `geometry_msgs/Quaternion`）按**工作模式**下发，节点仅取用其 `x`(swing) / `y`(boom)：
 
 | 工作模式 | 目标话题 | 触发值 |
 |----------|----------|--------|
 | 挖掘循环模式 | `/GP_dig_joints` | `/Sys_SRe_FlagResetExcute` data==1 |
 | 搭台模式 | `/clean_digPoint` | `/Sys_SRe_FlagResetExcute` data==2 |
 
-两话题字段定义一致：
+> 话题的 `z`(arm) / `w`(bucket) 字段仍会被缓存，但**不再作为复位目标**——arm 由配置外翻最大角覆盖，bucket 由姿态角逐帧解算。
 
-| 字段 | 含义 |
-|------|------|
-| `x` | swing 目标角（度） |
-| `y` | boom  目标角（度） |
-| `z` | arm   目标角（度） |
-| `w` | bucket目标角（度） |
+**bucket 姿态保持（仅阶段2）：** 阶段1 bucket 锁定为触发时的**当前实测值**；进入阶段2 后每一帧才按当前下发的 boom/arm 指令角重算 bucket，使发布帧的姿态角（boom+arm+bucket）恒为 `bucket_attitude_target_deg`（默认 −90°）；解算结果裁剪到 `[bucket_limit_lower_deg, bucket_limit_upper_deg]`。
 
-**触发时机：** 对应模式话题到达即更新该模式目标缓存；激活瞬间按当前模式锁定快照，
-执行期间目标话题刷新不影响正在执行的轨迹。
+**触发时机：** 对应模式话题到达即更新该模式目标缓存；激活瞬间按当前模式锁定 swing/boom 快照，arm/bucket 同刻按配置与姿态解算锁定，执行期间目标话题刷新不影响正在执行的轨迹。
 
-**失败会怎样：** 若激活模式对应的目标话题从未收到，前置校验不通过，节点不启动执行。
+**失败会怎样：** 若激活模式对应的目标话题从未收到（swing/boom 无源），前置校验不通过，节点不启动执行。
 
 ---
 
@@ -212,6 +215,16 @@ input_timeout_sec: 1.0
 
 # 调试日志开关：true 开启阶段周期进度、物理条件子项、防抖滤波等 [dbg] 打印
 enable_debug_log: false
+
+# arm 外翻最大角（deg）：复位 arm 目标角，替代话题 arm 值
+arm_deploy_max_deg: -30.0
+
+# bucket 姿态角目标（deg）：bucket = 该值 - boom - arm，逐帧保持
+bucket_attitude_target_deg: -90.0
+
+# bucket 指令限位（deg）：姿态保持解算后裁剪
+bucket_limit_lower_deg: -135.0
+bucket_limit_upper_deg: 30.0
 ```
 
 | 参数 | 类型 | 默认值 | 说明 |
@@ -223,6 +236,10 @@ enable_debug_log: false
 | `rs_threshold_5` | double | 5.0 | 铲斗相对地面高度结束阈值 |
 | `input_timeout_sec` | double | 1.0 | 输入话题最大静默时长，≤0 关闭检查 |
 | `enable_debug_log` | bool | false | 调试打印开关 |
+| `arm_deploy_max_deg` | double | -30.0 | arm 外翻最大角，复位 arm 目标（替代话题 arm） |
+| `bucket_attitude_target_deg` | double | -90.0 | bucket 姿态角目标（boom+arm+bucket） |
+| `bucket_limit_lower_deg` | double | -135.0 | bucket 指令下限 |
+| `bucket_limit_upper_deg` | double | 30.0 | bucket 指令上限 |
 
 ---
 

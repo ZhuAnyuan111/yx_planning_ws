@@ -30,3 +30,19 @@ truck_safe_margin_deg: 20.0
 
 # RSThreshold(5)：bucket_height_gd（铲斗相对地面高度）结束阈值
 rs_threshold_5: 0.0
+
+# ===== 复位目标姿态（部分关节由配置覆盖话题值）=====
+# swing / boom 目标角仍取自当前模式话题（/GP_dig_joints 或 /clean_digPoint）。
+# arm 目标角不取话题，固定为下方「外翻最大角」；bucket 不取话题，按姿态角保持逐帧解算。
+
+# arm 外翻最大角（deg，有符号）：复位时斗杆外伸到位的目标角。
+# 约定与 kinematics 一致——arm 关节范围 [-150, -30]，朝 -30 方向为外翻（外伸）最大。
+arm_deploy_max_deg: -30.0
+
+# bucket 姿态角目标（deg，有符号）：姿态角 = boom + arm + bucket。
+# 每帧按 bucket = 该值 - boom指令 - arm指令 解算，随 boom/arm 联动维持固定姿态。
+bucket_attitude_target_deg: -90.0
+
+# bucket 指令限位（deg）：姿态保持解算后裁剪，防止极端 boom/arm 组合解出超限铲斗角。
+bucket_limit_lower_deg: -135.0
+bucket_limit_upper_deg: 30.0
