@@ -5,7 +5,8 @@
 ///
 /// 4 关键航路点（关节角，rad）：
 ///   WP1 —— 挖掘终止点（起点，姿态角修正 bucket）
-///   WP4 —— 厢上过渡点（xy 由 ComputeMiddleUpXY 决定，铰接点高度=truck_top+bias，IK 求解）
+///   WP4 —— 厢上过渡点（xy 由 ComputeMiddleUpXY 决定，铰接点高度=truck_top+bias，IK 求解；
+///          boom 不低于 WP6.boom，入厢后不再包含动臂提升动作）
 ///   WP5 —— 卸载过渡点（swing 到位，boom 保持=WP4.boom 不下降，arm 按 P5 系数混合到 unload）
 ///   WP6 —— 终点（unload_joint 完整）
 ///

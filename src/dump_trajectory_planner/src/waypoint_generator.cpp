@@ -403,7 +403,10 @@ DumpWaypointResult GenerateDumpWaypoints(
     return result;
   }
   const double sw4 = Rad2Deg(ik.q.swing);
-  const double bo4 = Rad2Deg(ik.q.boom);
+  // WP4 boom 不得低于卸载点 boom：入厢后不应再包含动臂提升动作，
+  // 若 IK 解 boom < unload boom，则 clamp 到 unload boom（几何上齿尖更高，安全方向）。
+  const double bo4_raw = Rad2Deg(ik.q.boom);
+  const double bo4 = std::max(bo4_raw, bo_unload);
   const double ar4 = Rad2Deg(ik.q.arm);
 
   // ---------- swing 展开（处理 0°/360° 跨界）----------

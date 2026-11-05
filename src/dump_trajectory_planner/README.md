@@ -5,7 +5,7 @@
 ## 功能概述
 
 - 由 `/Sys_SeqAction == 4.0` 激活在线轨迹执行；另支持 `/Sys_SUn_FlagUnloadPlan == 1.0` 触发**预校验**（卸载点分布+航路点计算，只算不发轨迹），成功后发布 `/Sys_unloadPlanFinish = 1`；
-- 接收卡车近点及航向 `/truck_center_unloadpoint` → base 系 β=(180−α) mod 360 → rad；可选接收卡车远点 `/truck_center_unloadpoint_2`；
+- 接收卡车近点及航向 `/truck_center_unloadpoint`；卡车航向**优先由「近点→远点」连线方向**决定（两点均为 base/下车体系坐标，β=atan2(far.y−near.y, far.x−near.x)），远点缺失时回退 RTK 换算 β=(180−α) mod 360 → rad；可选接收卡车远点 `/truck_center_unloadpoint_2`；
 - **动态卸载点选取**：收到远点时，在近点↔远点间生成 21 个候选点，由远及近做 IK 可达性验证，在可达区域取最远/中间/最近三点，按当前装载斗数 `/Sys_SUn_BucketNumber` 依次选取（前 3 斗最远、中 3 斗中间、后 2 斗最近、超出默认中间）；未收到远点或未启用时回退单点模式（近点即卸载点，z=0）；
 - 订阅实时关节角作为轨迹起点（swing 经 `/heading2swing_topic`，boom/arm/bucket 经 `/joints_angle`）；
 - 由实时关节角经运动学 FK 计算铲斗齿尖坐标并发布 `/RealBktPosXYZ`，用于卸载过程中的高度安全门控；
@@ -189,7 +189,7 @@ h₀₁(s) = -2s³ + 3s²           h₁₁(s) = s³ - s²
 > RViz debug 层同时画出原始卡车框（白）与外扩后的**膨胀禁区**（橙，标注 `outset`），入厢点落在橙框上（= 铲斗边缘贴真实框）。
 
 
-> RTK 方位角 α 与挖机 base 系卡车航向 β 关系：`β = (180° − α) mod 360°`（北180/东90/南0/西270 逆时针增大；与 truck_dump_planner 6 方向闭环验证一致。曾误用 `+α` 导致卡车朝向镜像、厢体画偏）。
+> 卡车航向 β 优先由「近点→远点」连线方向决定：两点均为 base/下车体系坐标，`β = atan2(far.y−near.y, far.x−near.x)`（归一到 [0,360)，forward=(cosβ,sinβ) 由 near 指向 far）；远点 `/truck_center_unloadpoint_2` 未收到或两点重合时回退 RTK 方位角换算 `β = (180° − α) mod 360°`（北180/东90/南0/西270 逆时针增大；与 truck_dump_planner 6 方向闭环验证一致。曾误用 `+α` 导致卡车朝向镜像、厢体画偏）。
 
 ## Seg0 两阶段策略（核心）
 

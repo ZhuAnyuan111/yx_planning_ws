@@ -167,6 +167,10 @@ void DumpTrajectoryNode::LoadParams() {
       std::clamp(static_cast<double>(
                      pnh_.param("online_plan/seg0_boom_pchip_start_cof", 0.5)),
                  0.0, 1.0);
+  seg0_boom_pchip_threshold_deg_ =
+      pnh_.param("online_plan/seg0_boom_pchip_threshold_deg", 8.0);
+  seg0_boom_pchip_timeout_sec_ =
+      pnh_.param("online_plan/seg0_boom_pchip_timeout_sec", 3.0);
 
   // ---- Seg0 斗杆条件打出（arm deploy）----
   seg0_arm_deploy_enable_ =
@@ -236,47 +240,74 @@ void DumpTrajectoryNode::SetupTopics() {
 
 void DumpTrajectoryNode::TruckPoseCallback(
     const geometry_msgs::Quaternion::ConstPtr& msg) {
-  // x/y/z = 卡车中心坐标；w = RTK方位角 α (deg, 北0顺时针)
-  // base 系卡车航向 β = (180 − α) mod 360 → rad
-  // （北180/东90/南0/西270 逆时针增大；与 truck_dump_planner 经 6 方向
-  //   闭环验证的转换一致。曾误用 (180+α) 导致卡车朝向镜像、厢体画偏）
+  // x/y/z = 卡车中心（近点）坐标（base/下车体系, m）；w = RTK方位角 α (deg, 北0顺时针)
+  // 卡车航向优先由「近点→远点」连线决定（见 RecomputeTruckYaw），
+  // 远点未收到时回退 RTK 换算 β = (180 − α) mod 360。
   const bool first_recv = !truck_pose_valid_;
   truck_pose_.center_x = msg->x;
   truck_pose_.center_y = msg->y;
   truck_pose_.center_z = msg->z;      // RTK 高度，用于计算卡车框高度
-  truck_pose_.rtk_heading_deg = msg->w;  // RTK 方位角 α
-  double beta_deg = std::fmod(180.0 - msg->w, 360.0);
-  if (beta_deg < 0.0) beta_deg += 360.0;
-  truck_pose_.yaw_rad = Deg2Rad(beta_deg);
+  truck_pose_.rtk_heading_deg = msg->w;  // RTK 方位角 α（回退航向源）
   truck_pose_valid_ = true;
 
   // 卸载点取卡车中心 x/y，z 直接用 RTK 高度（卸载点高度 = truck_center_unloadpoint.z）
   unload_point_ = {msg->x, msg->y, msg->z};
   unload_valid_ = true;
 
+  // 航向：若远点已到则用近点→远点连线，否则回退 RTK α
+  RecomputeTruckYaw();
+
   // 仅首次到达打印一次（该话题高频发布，避免每帧刷屏）
   if (first_recv) {
     ROS_INFO("[dump_traj] truck near point received: (%.2f, %.2f, %.2f) m, "
-             "rtk_heading=%.2f deg -> yaw_base=%.2f deg",
+             "rtk_heading=%.2f deg -> yaw_base=%.2f deg (%s)",
              truck_pose_.center_x, truck_pose_.center_y, truck_pose_.center_z,
-             truck_pose_.rtk_heading_deg, Rad2Deg(truck_pose_.yaw_rad));
+             truck_pose_.rtk_heading_deg, Rad2Deg(truck_pose_.yaw_rad),
+             truck_yaw_from_line_ ? "near->far line" : "RTK alpha fallback");
   }
 }
 
 void DumpTrajectoryNode::TruckPoseFarCallback(
     const geometry_msgs::Quaternion::ConstPtr& msg) {
-  // 卡车远点（x/y 有效，w 不使用）
+  // 卡车远点（x/y 有效且为 base/下车体系坐标，w 不使用）
   const bool first_recv = !unload_far_valid_;
   unload_point_far_ = {msg->x, msg->y, 0.0};
   unload_far_valid_ = true;
 
+  // 远点到达后，若近点已知则用连线方向刷新卡车航向
+  if (truck_pose_valid_) {
+    RecomputeTruckYaw();
+  }
+
   // 仅首次到达打印一次（该话题高频发布，避免每帧刷屏）
   if (first_recv) {
     ROS_INFO("[dump_traj] truck far point received: (%.2f, %.2f) m "
-             "(dynamic unload selector %s)",
+             "(dynamic unload selector %s; yaw source -> %s, yaw_base=%.2f deg)",
              unload_point_far_.x, unload_point_far_.y,
-             unload_selector_enable_ ? "enabled" : "disabled");
+             unload_selector_enable_ ? "enabled" : "disabled",
+             truck_yaw_from_line_ ? "near->far line" : "RTK alpha fallback",
+             Rad2Deg(truck_pose_.yaw_rad));
   }
+}
+
+/// 重算卡车航向：优先「近点→远点」连线方向，远点无效/两点重合时回退 RTK α。
+/// 近点与远点均为 base/下车体系坐标，atan2(Δy,Δx) 直接给出 base 系航向，
+/// 与 forward=(cosβ,sinβ) 约定一致（forward 由 near 指向 far）。
+void DumpTrajectoryNode::RecomputeTruckYaw() {
+  double beta_deg;
+  const double dx = unload_point_far_.x - truck_pose_.center_x;
+  const double dy = unload_point_far_.y - truck_pose_.center_y;
+  if (unload_far_valid_ && std::hypot(dx, dy) > 1e-6) {
+    beta_deg = Rad2Deg(std::atan2(dy, dx));
+    truck_yaw_from_line_ = true;
+  } else {
+    // 回退：RTK 方位角 α → β = (180 − α)
+    beta_deg = 180.0 - truck_pose_.rtk_heading_deg;
+    truck_yaw_from_line_ = false;
+  }
+  beta_deg = std::fmod(beta_deg, 360.0);
+  if (beta_deg < 0.0) beta_deg += 360.0;
+  truck_pose_.yaw_rad = Deg2Rad(beta_deg);
 }
 
 void DumpTrajectoryNode::BucketNumberCallback(
@@ -540,6 +571,16 @@ bool DumpTrajectoryNode::PlanWaypoints() {
              Rad2Deg(wp.arm), Rad2Deg(wp.bucket), wpts.t_array[i]);
   }
 
+  // WP4 boom clamp 提示：入厢点 boom 被抬升到卸载点 boom（入厢后不再有动臂提升）
+  if (wpts.waypoints.size() >= 4) {
+    const double bo4 = Rad2Deg(wpts.waypoints[1].boom);
+    const double bo_unl = Rad2Deg(fr.unload_joint.boom);
+    if (std::abs(bo4 - bo_unl) < 0.01) {
+      ROS_INFO("[dump_traj] WP4 boom clamped to unload boom (%.2f deg), "
+               "no boom lift inside truck", bo4);
+    }
+  }
+
   // 缓存航路点并展开 swing 角度（处理 0°/360° 边界）
   waypoints_ = wpts.waypoints;
   UnwrapSwingSequence(waypoints_);
@@ -755,16 +796,42 @@ void DumpTrajectoryNode::TimerCallback(const ros::TimerEvent& /*event*/) {
     case DumpPhase::kExecutingSegment: {
       // ---- Seg0 Phase 1：阶跃段特殊处理 ----
       if (current_seg_idx_ == 0 && !seg0_phase1_complete_) {
-        // boom 与 swing 解耦（用户规格）：进入卸载（SeqAction=4）后 boom 先阶跃到"中间角"
-        // seg0_p1_boom_mid_rad_ = WP1.boom + cof·(WP4.boom − WP1.boom)，随即沿预算的时间
-        // PCHIP（seg0_p1_boom_traj_：mid→WP4.boom）逐帧采样抬升，与 swing 阶跃并行、
-        // 不等 swing 到位/Phase2；采样结束后保持 WP4.boom。
+        // boom 与 swing 解耦：进入卸载后 boom 先阶跃到"中间角"，等待实测到达阈值内
+        // 后再启动 PCHIP（mid→WP4.boom）逐帧抬升，避免液压响应延迟期间参考超前实际。
+        // 超时兜底：等待超过 seg0_boom_pchip_timeout_sec_ 后强制启动（防死等）。
         if (!seg0_p1_boom_traj_.empty()) {
-          const double p1_boom_age = (ros::Time::now() - seg_start_time_).toSec();
-          const size_t boom_idx = std::min(
-              static_cast<size_t>(p1_boom_age * publish_rate_hz_),
-              seg0_p1_boom_traj_.size() - 1);
-          seg0_phase1_cmd_.boom = seg0_p1_boom_traj_[boom_idx].boom;
+          if (!seg0_boom_pchip_started_) {
+            // 等待 boom 实测到达 mid 附近
+            const double boom_err_deg =
+                std::abs(Rad2Deg(current_joint_.boom - seg0_p1_boom_mid_rad_));
+            const double wait_age =
+                (ros::Time::now() - seg_start_time_).toSec();
+            if (boom_err_deg <= seg0_boom_pchip_threshold_deg_) {
+              seg0_boom_pchip_started_ = true;
+              seg0_boom_pchip_start_time_ = ros::Time::now();
+              ROS_INFO("[dump_traj] seg0 boom PCHIP started: err=%.2f deg <= thr %.2f",
+                       boom_err_deg, seg0_boom_pchip_threshold_deg_);
+            } else if (wait_age >= seg0_boom_pchip_timeout_sec_) {
+              seg0_boom_pchip_started_ = true;
+              seg0_boom_pchip_start_time_ = ros::Time::now();
+              ROS_WARN("[dump_traj] seg0 boom PCHIP force-started (timeout %.1fs, "
+                       "err=%.2f deg > thr %.2f)",
+                       seg0_boom_pchip_timeout_sec_, boom_err_deg,
+                       seg0_boom_pchip_threshold_deg_);
+            }
+          }
+          if (seg0_boom_pchip_started_) {
+            // PCHIP 已启动：从启动时刻开始采样
+            const double p1_boom_age =
+                (ros::Time::now() - seg0_boom_pchip_start_time_).toSec();
+            const size_t boom_idx = std::min(
+                static_cast<size_t>(p1_boom_age * publish_rate_hz_),
+                seg0_p1_boom_traj_.size() - 1);
+            seg0_phase1_cmd_.boom = seg0_p1_boom_traj_[boom_idx].boom;
+          } else {
+            // 尚未启动：保持 mid 角指令（等待液压响应到位）
+            seg0_phase1_cmd_.boom = seg0_p1_boom_mid_rad_;
+          }
         } else {
           seg0_phase1_cmd_.boom = seg0_p1_boom_mid_rad_;
         }
@@ -1233,6 +1300,7 @@ void DumpTrajectoryNode::PlanCurrentSegment() {
     seg0_arm_deploy_active_ = false;
     seg0_arm_deploy_done_ = false;
     seg0_boom_arrived_count_ = 0;
+    seg0_boom_pchip_started_ = false;
     seg0_phase2_grace_eff_sec_ = 0.0;
     // 铲斗条件开斗状态复位：每轮卸载都必须清零，否则第二轮带着上一轮的 done=true
     // 直接跳过开斗。放在 seg_idx==0 内保证跨段（Seg1→Seg2）不清零。

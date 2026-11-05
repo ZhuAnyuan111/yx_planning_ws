@@ -106,6 +106,14 @@ class DumpTrajectoryNode {
   /// <=1.0 即该段所有主导关节各自达标；seg0=swing+boom, seg1=swing, seg2=arm+bucket
   double ComputeSegError(int seg_idx) const;
 
+  /// @brief 重算卡车航向 truck_pose_.yaw_rad：
+  ///   优先用「近点→远点」连线方向（两点均为 base/下车体系坐标，
+  ///   β = atan2(far.y−near.y, far.x−near.x)，归一到 [0,360)，
+  ///   与 forward=(cosβ,sinβ) 约定一致，即 forward 由 near 指向 far）；
+  ///   远点未收到或两点重合时回退 RTK 方位角换算 β=(180−α) mod 360。
+  ///   同时置 truck_yaw_from_line_ 标记航向来源（true=连线，false=RTK α）。
+  void RecomputeTruckYaw();
+
   /// @brief 卡车框顶高（base 系, m）= 卡车 RTK 中心高 center_z − truck_height_offset
   /// （与 waypoint_generator 中 WP4 框高计算逻辑一致，动态随 RTK 高度变化）
   double TruckTopHeight() const;
@@ -302,6 +310,12 @@ class DumpTrajectoryNode {
   double seg0_p1_boom_mid_rad_ = 0.0;      // Phase1 boom 阶跃目标角（中间角，rad）
   std::vector<kinematics::JointState> seg0_p1_boom_traj_;  // Phase1 boom 并行 PCHIP 轨迹（mid→WP4.boom，按发布率采样）
   double seg0_p1_boom_time_sec_ = 0.0;     // 上述 PCHIP 时长(s) = |WP4.boom − mid| / seg0_boom_vel_dps
+  // boom PCHIP 启动时机：等待实测 boom 到达 mid 附近（阈值内）后再开始播放 PCHIP，
+  // 避免液压响应延迟期间参考轨迹已超前实际位置导致跟踪偏差累积。
+  double seg0_boom_pchip_threshold_deg_ = 8.0;  // boom 到达 mid 的跟踪阈值(deg)：|实测−mid| ≤ 该值时启动 PCHIP
+  double seg0_boom_pchip_timeout_sec_ = 3.0;    // 等待超时兜底(s)：超时后强制启动 PCHIP（防死等）
+  bool seg0_boom_pchip_started_ = false;        // PCHIP 是否已启动
+  ros::Time seg0_boom_pchip_start_time_;        // PCHIP 实际启动时刻（采样基准）
 
   // ---- Seg0 斗杆条件打出状态 ----
   bool seg0_arm_deploy_active_ = false;    // deploy 已触发：arm 正按 seg0_arm_deploy_dps_ 限速追赶 WP4.arm
@@ -332,6 +346,7 @@ class DumpTrajectoryNode {
   // ---- 动态卸载点选取 ----
   Point3 unload_point_far_;                // 卡车远点（/truck_center_unloadpoint_2）
   bool unload_far_valid_ = false;
+  bool truck_yaw_from_line_ = false;       // 航向来源标记：true=近点→远点连线，false=RTK α 回退
   int bucket_number_ = 0;                  // 当前装载斗数（/Sys_SUn_BucketNumber）
   bool bucket_number_valid_ = false;
   bool unload_selector_enable_ = true;     // 是否启用动态选取（false 或未收到远点时回退单点）
